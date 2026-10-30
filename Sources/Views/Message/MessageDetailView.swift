@@ -46,6 +46,20 @@ public struct MessageDetailView: View {
         .background(VipleMailPalette.background)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    vm.closeMessage()
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 15, weight: .bold))
+                        Text(vm.activeFolderTitle)
+                            .font(.system(size: 15, weight: .semibold, design: .rounded))
+                            .lineLimit(1)
+                    }
+                }
+            }
+
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button {
                     Task {
@@ -68,7 +82,6 @@ public struct MessageDetailView: View {
                             toast: "Marqué comme non lu"
                         )
                         vm.closeMessage()
-                        dismiss()
                     }
                 } label: {
                     Image(systemName: "envelope.badge")
@@ -82,7 +95,6 @@ public struct MessageDetailView: View {
                             toast: "Message archivé"
                         )
                         vm.closeMessage()
-                        dismiss()
                     }
                 } label: {
                     Image(systemName: "archivebox")
@@ -96,7 +108,6 @@ public struct MessageDetailView: View {
                             toast: "Déplacé dans la Corbeille"
                         )
                         vm.closeMessage()
-                        dismiss()
                     }
                 } label: {
                     Image(systemName: "trash")
@@ -104,18 +115,16 @@ public struct MessageDetailView: View {
                 }
             }
         }
+        .gesture(
+            DragGesture(minimumDistance: 24, coordinateSpace: .local)
+                .onEnded { value in
+                    if value.startLocation.x < 44 && value.translation.width > 70 && abs(value.translation.height) < 90 {
+                        vm.closeMessage()
+                    }
+                }
+        )
         .task {
             await vm.openMessageAndLoadThread(message)
-        }
-        .onAppear {
-            withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
-                vm.isReadingMessage = true
-            }
-        }
-        .onDisappear {
-            withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
-                vm.isReadingMessage = false
-            }
         }
     }
 

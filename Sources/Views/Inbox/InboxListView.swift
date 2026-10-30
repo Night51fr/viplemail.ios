@@ -60,17 +60,6 @@ public struct InboxListView: View {
             }
         }
         .background(VipleMailPalette.background)
-        .navigationBarHidden(true)
-        .navigationDestination(item: $vm.openedMessage) { msg in
-            MessageDetailView(message: msg)
-        }
-        .onAppear {
-            if vm.openedMessage == nil && vm.isReadingMessage {
-                withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
-                    vm.isReadingMessage = false
-                }
-            }
-        }
         .sheet(isPresented: $isShowingMoveFolderSheet) {
             moveToFolderPickerSheet
         }

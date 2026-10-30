@@ -95,33 +95,43 @@ public struct VipleMailMainView: View {
 
     private var authenticatedShell: some View {
         VStack(spacing: 0) {
-            if !vm.isReadingMessage {
-                topBrandHeaderBar
-                    .transition(.move(edge: .top).combined(with: .opacity))
-            }
-
             ZStack(alignment: .bottomTrailing) {
-                Group {
-                    switch vm.selectedTab {
-                    case 0:
-                        NavigationStack {
+                // Couche 1 : Barre supérieure « Viple Mail » + Contenu de l'onglet actif (0 décalage garanti)
+                VStack(spacing: 0) {
+                    topBrandHeaderBar
+                        .offset(y: vm.isReadingMessage ? -72 : 0)
+                        .opacity(vm.isReadingMessage ? 0 : 1)
+
+                    Group {
+                        switch vm.selectedTab {
+                        case 0:
                             InboxListView()
-                        }
-                    case 1:
-                        NavigationStack {
+                        case 1:
                             MailFoldersView()
-                        }
-                    case 2:
-                        NavigationStack {
+                        case 2:
                             MailContactsView()
-                        }
-                    default:
-                        NavigationStack {
+                        default:
                             MailSettingsView()
                         }
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                // Couche 2 : Lecture du mail plein espace avec sa propre NavigationStack (boutons natifs SwiftUI Liquid Glass)
+                if vm.selectedTab == 0, let openedMsg = vm.openedMessage {
+                    NavigationStack {
+                        MessageDetailView(message: openedMsg)
+                    }
+                    .id(openedMsg.id)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(VipleMailPalette.background)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .trailing),
+                        removal: .move(edge: .trailing)
+                    ))
+                    .zIndex(10)
+                }
 
                 // Bouton Flottant « Nouveau courrier » (masqué en mode sélection multiple et pendant la lecture d'un mail)
                 if !vm.isSelectionMode && !vm.isReadingMessage && vm.openedMessage == nil {
@@ -146,12 +156,14 @@ public struct VipleMailMainView: View {
                     .padding(.trailing, 20)
                     .padding(.bottom, 18)
                     .transition(.scale.combined(with: .opacity))
+                    .zIndex(20)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipped()
 
             bottomNavigationBar
         }
-        .animation(.spring(response: 0.36, dampingFraction: 0.86), value: vm.isReadingMessage)
     }
 
     // MARK: - En-tête Signature Viple Mail (Logo Horizontal en Haut à Gauche + Boîte Active + Actions)
