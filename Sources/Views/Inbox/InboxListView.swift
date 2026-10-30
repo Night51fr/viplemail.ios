@@ -61,13 +61,6 @@ public struct InboxListView: View {
         }
         .background(VipleMailPalette.background)
         .navigationBarHidden(true)
-        .onAppear {
-            if vm.isReadingMessage {
-                withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
-                    vm.isReadingMessage = false
-                }
-            }
-        }
         .sheet(isPresented: $isShowingMoveFolderSheet) {
             moveToFolderPickerSheet
         }
@@ -266,20 +259,17 @@ public struct InboxListView: View {
                     vm.presentComposer(.editDraft(msg))
                 } label: {
                     messageRowContent(msg)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
             } else {
-                NavigationLink {
-                    MessageDetailView(message: msg)
+                Button {
+                    vm.openMessage(msg)
                 } label: {
                     messageRowContent(msg)
+                        .contentShape(Rectangle())
                 }
-                .simultaneousGesture(
-                    TapGesture().onEnded {
-                        withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
-                            vm.isReadingMessage = true
-                        }
-                    }
-                )
+                .buttonStyle(.plain)
             }
         }
         .listRowInsets(EdgeInsets(top: 6, leading: 14, bottom: 6, trailing: 14))

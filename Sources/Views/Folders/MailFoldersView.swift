@@ -157,6 +157,7 @@ public struct MailFoldersView: View {
 
         return Button {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+                vm.closeMessage()
                 vm.activeFolderId = folder.id
                 vm.selectedTab = 0
             }

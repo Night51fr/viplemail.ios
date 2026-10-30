@@ -54,6 +54,21 @@ public final class VipleMailViewModel: ObservableObject {
     // Conversation ouverte
     @Published public var activeThreadMessages: [VipleMailMessage] = []
     @Published public var isReadingMessage: Bool = false
+    @Published public var openedMessage: VipleMailMessage? = nil
+
+    public func openMessage(_ msg: VipleMailMessage) {
+        withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
+            self.openedMessage = msg
+            self.isReadingMessage = true
+        }
+    }
+
+    public func closeMessage() {
+        withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
+            self.openedMessage = nil
+            self.isReadingMessage = false
+        }
+    }
 
     public func resolveAvatarUrl(for email: String, explicitUrl: String? = nil) -> String? {
         if let exp = explicitUrl?.trimmingCharacters(in: .whitespacesAndNewlines), !exp.isEmpty {
