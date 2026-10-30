@@ -21,8 +21,6 @@ public struct MessageDetailView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            messageTopActionBar
-
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 16) {
                     subjectAndBadgesHeader
@@ -46,41 +44,9 @@ public struct MessageDetailView: View {
             quickReplyBottomBar
         }
         .background(VipleMailPalette.background)
-        .navigationBarHidden(true)
-        .gesture(
-            DragGesture(minimumDistance: 24, coordinateSpace: .local)
-                .onEnded { value in
-                    if value.startLocation.x < 44 && value.translation.width > 70 && abs(value.translation.height) < 90 {
-                        vm.closeMessage()
-                    }
-                }
-        )
-        .task {
-            await vm.openMessageAndLoadThread(message)
-        }
-    }
-
-    // MARK: - Barre d'Actions Supérieure du Message (Retour + Favoris, Non lu, Archiver, Corbeille)
-
-    private var messageTopActionBar: some View {
-        HStack(spacing: 12) {
-            Button {
-                vm.closeMessage()
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 16, weight: .bold))
-                    Text(vm.activeFolderTitle)
-                        .font(.system(size: 15, weight: .bold, design: .rounded))
-                        .lineLimit(1)
-                }
-                .foregroundStyle(VipleMailPalette.primary)
-                .padding(.vertical, 6)
-            }
-
-            Spacer()
-
-            HStack(spacing: 16) {
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
                 Button {
                     Task {
                         await vm.performMessageAction(
@@ -91,10 +57,8 @@ public struct MessageDetailView: View {
                     }
                 } label: {
                     Image(systemName: currentMessage.isStarred ? "star.fill" : "star")
-                        .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(currentMessage.isStarred ? VipleMailPalette.starYellow : VipleMailPalette.ink)
                 }
-                .accessibilityLabel("Favori")
 
                 Button {
                     Task {
@@ -104,13 +68,11 @@ public struct MessageDetailView: View {
                             toast: "Marqué comme non lu"
                         )
                         vm.closeMessage()
+                        dismiss()
                     }
                 } label: {
                     Image(systemName: "envelope.badge")
-                        .font(.system(size: 16.5, weight: .semibold))
-                        .foregroundStyle(VipleMailPalette.ink)
                 }
-                .accessibilityLabel("Marquer comme non lu")
 
                 Button {
                     Task {
@@ -120,13 +82,11 @@ public struct MessageDetailView: View {
                             toast: "Message archivé"
                         )
                         vm.closeMessage()
+                        dismiss()
                     }
                 } label: {
                     Image(systemName: "archivebox")
-                        .font(.system(size: 16.5, weight: .semibold))
-                        .foregroundStyle(VipleMailPalette.ink)
                 }
-                .accessibilityLabel("Archiver")
 
                 Button(role: .destructive) {
                     Task {
@@ -136,21 +96,27 @@ public struct MessageDetailView: View {
                             toast: "Déplacé dans la Corbeille"
                         )
                         vm.closeMessage()
+                        dismiss()
                     }
                 } label: {
                     Image(systemName: "trash")
-                        .font(.system(size: 16.5, weight: .semibold))
                         .foregroundStyle(VipleMailPalette.danger)
                 }
-                .accessibilityLabel("Supprimer")
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(
-            VipleMailPalette.surface
-                .shadow(color: VipleMailPalette.cobaltDeep.opacity(0.05), radius: 8, x: 0, y: 3)
-        )
+        .task {
+            await vm.openMessageAndLoadThread(message)
+        }
+        .onAppear {
+            withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
+                vm.isReadingMessage = true
+            }
+        }
+        .onDisappear {
+            withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
+                vm.isReadingMessage = false
+            }
+        }
     }
 
     // MARK: - En-tête Objet & Badges

@@ -108,7 +108,7 @@ public struct VipleMailboxQuota: Codable, Equatable, Sendable {
     }
 }
 
-public struct VipleMailAttachment: Codable, Identifiable, Equatable, Sendable {
+public struct VipleMailAttachment: Codable, Identifiable, Equatable, Hashable, Sendable {
     public let id: String
     public let fileName: String
     public let mimeType: String
@@ -138,7 +138,7 @@ public struct VipleMailAttachment: Codable, Identifiable, Equatable, Sendable {
     }
 }
 
-public struct VipleMailMessage: Codable, Identifiable, Equatable, Sendable {
+public struct VipleMailMessage: Codable, Identifiable, Equatable, Hashable, Sendable {
     public let id: String
     public let mailboxId: String
     public var folder: String

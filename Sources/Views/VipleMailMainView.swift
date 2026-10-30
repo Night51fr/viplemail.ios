@@ -35,7 +35,7 @@ public struct VipleMailMainView: View {
                 .zIndex(99)
             }
         }
-        .sheet(isPresented: $vm.isShowingComposeSheet) {
+        .fullScreenCover(isPresented: $vm.isShowingComposeSheet) {
             ComposeMailView(mode: vm.activeComposeMode ?? .newMail())
                 .environmentObject(vm)
         }
@@ -95,7 +95,7 @@ public struct VipleMailMainView: View {
 
     private var authenticatedShell: some View {
         VStack(spacing: 0) {
-            if !vm.isReadingMessage && vm.openedMessage == nil {
+            if !vm.isReadingMessage {
                 topBrandHeaderBar
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
@@ -104,19 +104,8 @@ public struct VipleMailMainView: View {
                 Group {
                     switch vm.selectedTab {
                     case 0:
-                        ZStack {
-                            NavigationStack {
-                                InboxListView()
-                            }
-                            if let openedMsg = vm.openedMessage {
-                                MessageDetailView(message: openedMsg)
-                                    .id(openedMsg.id)
-                                    .transition(.asymmetric(
-                                        insertion: .move(edge: .trailing),
-                                        removal: .move(edge: .trailing)
-                                    ))
-                                    .zIndex(10)
-                            }
+                        NavigationStack {
+                            InboxListView()
                         }
                     case 1:
                         NavigationStack {
@@ -163,7 +152,6 @@ public struct VipleMailMainView: View {
             bottomNavigationBar
         }
         .animation(.spring(response: 0.36, dampingFraction: 0.86), value: vm.isReadingMessage)
-        .animation(.spring(response: 0.36, dampingFraction: 0.86), value: vm.openedMessage?.id)
     }
 
     // MARK: - En-tête Signature Viple Mail (Logo Horizontal en Haut à Gauche + Boîte Active + Actions)

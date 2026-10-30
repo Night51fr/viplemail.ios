@@ -57,15 +57,15 @@ public final class VipleMailViewModel: ObservableObject {
     @Published public var openedMessage: VipleMailMessage? = nil
 
     public func openMessage(_ msg: VipleMailMessage) {
+        self.openedMessage = msg
         withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
-            self.openedMessage = msg
             self.isReadingMessage = true
         }
     }
 
     public func closeMessage() {
+        self.openedMessage = nil
         withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
-            self.openedMessage = nil
             self.isReadingMessage = false
         }
     }
