@@ -161,6 +161,8 @@ public struct VipleMailMessage: Codable, Identifiable, Equatable, Sendable {
     public let sizeBytes: Int
     public let receivedAt: String
     public let attachments: [VipleMailAttachment]
+    public let senderAvatarUrl: String?
+    public let recipientAvatarUrl: String?
 
     public var hasAttachments: Bool {
         !attachments.isEmpty

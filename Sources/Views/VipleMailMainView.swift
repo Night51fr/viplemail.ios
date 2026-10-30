@@ -95,7 +95,10 @@ public struct VipleMailMainView: View {
 
     private var authenticatedShell: some View {
         VStack(spacing: 0) {
-            topBrandHeaderBar
+            if !vm.isReadingMessage {
+                topBrandHeaderBar
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
 
             ZStack(alignment: .bottomTrailing) {
                 Group {
@@ -120,8 +123,8 @@ public struct VipleMailMainView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                // Bouton Flottant « Nouveau courrier » (masqué en mode sélection multiple)
-                if !vm.isSelectionMode {
+                // Bouton Flottant « Nouveau courrier » (masqué en mode sélection multiple et pendant la lecture d'un mail)
+                if !vm.isSelectionMode && !vm.isReadingMessage {
                     Button {
                         vm.presentComposer(.newMail())
                     } label: {
@@ -142,11 +145,13 @@ public struct VipleMailMainView: View {
                     }
                     .padding(.trailing, 20)
                     .padding(.bottom, 18)
+                    .transition(.scale.combined(with: .opacity))
                 }
             }
 
             bottomNavigationBar
         }
+        .animation(.spring(response: 0.36, dampingFraction: 0.86), value: vm.isReadingMessage)
     }
 
     // MARK: - En-tête Signature Viple Mail (Logo Horizontal en Haut à Gauche + Boîte Active + Actions)
@@ -177,6 +182,7 @@ public struct VipleMailMainView: View {
                         VipleMailAvatarView(
                             name: user.displayName,
                             email: user.primaryAddress,
+                            avatarUrl: user.avatarUrl,
                             size: 34,
                             isVip: true
                         )
@@ -246,10 +252,10 @@ public struct VipleMailMainView: View {
         let isSelected = vm.selectedTab == index
         return Button {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                vm.selectedTab = index
-                if index == 0 && vm.activeFolderId != "Inbox" {
-                    // Garde le dossier courant mais permet de revenir à Inbox d'un second tap
+                if index != 0 {
+                    vm.isReadingMessage = false
                 }
+                vm.selectedTab = index
             }
         } label: {
             VStack(spacing: 4) {

@@ -53,6 +53,28 @@ public final class VipleMailViewModel: ObservableObject {
 
     // Conversation ouverte
     @Published public var activeThreadMessages: [VipleMailMessage] = []
+    @Published public var isReadingMessage: Bool = false
+
+    public func resolveAvatarUrl(for email: String, explicitUrl: String? = nil) -> String? {
+        if let exp = explicitUrl?.trimmingCharacters(in: .whitespacesAndNewlines), !exp.isEmpty {
+            return exp
+        }
+        let clean = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !clean.isEmpty else { return nil }
+        if let u = currentUser,
+           (u.email.lowercased() == clean || u.primaryAddress.lowercased() == clean),
+           let uAv = u.avatarUrl, !uAv.isEmpty {
+            return uAv
+        }
+        if let c = contacts.first(where: { $0.contactEmail.lowercased() == clean }),
+           !c.avatarUrl.isEmpty {
+            return c.avatarUrl
+        }
+        if let m = messages.first(where: { $0.senderEmail.lowercased() == clean && !($0.senderAvatarUrl ?? "").isEmpty }) {
+            return m.senderAvatarUrl
+        }
+        return nil
+    }
 
     private let defaults = UserDefaults.standard
     private let sharedGroupDefaults = UserDefaults(suiteName: "group.store.livria.shared")

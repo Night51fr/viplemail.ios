@@ -61,6 +61,13 @@ public struct InboxListView: View {
         }
         .background(VipleMailPalette.background)
         .navigationBarHidden(true)
+        .onAppear {
+            if vm.isReadingMessage {
+                withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
+                    vm.isReadingMessage = false
+                }
+            }
+        }
         .sheet(isPresented: $isShowingMoveFolderSheet) {
             moveToFolderPickerSheet
         }
@@ -266,6 +273,13 @@ public struct InboxListView: View {
                 } label: {
                     messageRowContent(msg)
                 }
+                .simultaneousGesture(
+                    TapGesture().onEnded {
+                        withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+                            vm.isReadingMessage = true
+                        }
+                    }
+                )
             }
         }
         .listRowInsets(EdgeInsets(top: 6, leading: 14, bottom: 6, trailing: 14))
@@ -419,6 +433,9 @@ public struct InboxListView: View {
             VipleMailAvatarView(
                 name: msg.folder == "Sent" ? msg.recipientEmail : msg.senderName,
                 email: msg.folder == "Sent" ? msg.recipientEmail : msg.senderEmail,
+                avatarUrl: msg.folder == "Sent"
+                    ? vm.resolveAvatarUrl(for: msg.recipientEmail, explicitUrl: msg.recipientAvatarUrl)
+                    : vm.resolveAvatarUrl(for: msg.senderEmail, explicitUrl: msg.senderAvatarUrl),
                 size: 46,
                 isVip: msg.isVipSender,
                 isUnread: !msg.isRead

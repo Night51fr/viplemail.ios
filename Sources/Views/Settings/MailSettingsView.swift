@@ -37,6 +37,7 @@ public struct MailSettingsView: View {
                 VipleMailAvatarView(
                     name: vm.currentUser?.displayName ?? "Viple",
                     email: vm.currentEmail,
+                    avatarUrl: vm.currentUser?.avatarUrl,
                     size: 58,
                     isVip: true
                 )

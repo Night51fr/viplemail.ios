@@ -91,6 +91,16 @@ public struct MessageDetailView: View {
         .task {
             await vm.openMessageAndLoadThread(message)
         }
+        .onAppear {
+            withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
+                vm.isReadingMessage = true
+            }
+        }
+        .onDisappear {
+            withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
+                vm.isReadingMessage = false
+            }
+        }
     }
 
     // MARK: - En-tête Objet & Badges
@@ -140,6 +150,7 @@ public struct MessageDetailView: View {
                 VipleMailAvatarView(
                     name: currentMessage.senderName,
                     email: currentMessage.senderEmail,
+                    avatarUrl: vm.resolveAvatarUrl(for: currentMessage.senderEmail, explicitUrl: currentMessage.senderAvatarUrl),
                     size: 48,
                     isVip: currentMessage.isVipSender
                 )
@@ -217,10 +228,22 @@ public struct MessageDetailView: View {
 
             ForEach(vm.activeThreadMessages) { item in
                 VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Text(item.senderName)
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(VipleMailPalette.ink)
+                    HStack(spacing: 10) {
+                        VipleMailAvatarView(
+                            name: item.senderName,
+                            email: item.senderEmail,
+                            avatarUrl: vm.resolveAvatarUrl(for: item.senderEmail, explicitUrl: item.senderAvatarUrl),
+                            size: 32,
+                            isVip: item.isVipSender
+                        )
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(item.senderName)
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(VipleMailPalette.ink)
+                            Text(item.senderEmail)
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundStyle(VipleMailPalette.primary)
+                        }
                         Spacer()
                         Text(item.formattedRelativeDate)
                             .font(.system(size: 12, weight: .semibold))

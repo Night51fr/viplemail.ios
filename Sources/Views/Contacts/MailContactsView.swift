@@ -127,6 +127,7 @@ public struct MailContactsView: View {
             VipleMailAvatarView(
                 name: contact.displayName,
                 email: contact.contactEmail,
+                avatarUrl: vm.resolveAvatarUrl(for: contact.contactEmail, explicitUrl: contact.avatarUrl),
                 size: 48,
                 isVip: contact.isFavorite
             )

@@ -1,4 +1,70 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
+
+// MARK: - Chargeur & Cache Mémoire de Photos de Profil Viple Live ID (@viplemail.fr)
+
+@MainActor
+public final class VipleMailAvatarImageCache {
+    public static let shared = VipleMailAvatarImageCache()
+
+    #if canImport(UIKit)
+    private let cache = NSCache<NSString, UIImage>()
+    #endif
+    private let session: URLSession
+    private let delegate = VipleMailTLSSessionDelegate()
+
+    private init() {
+        let cfg = URLSessionConfiguration.default
+        cfg.timeoutIntervalForRequest = 15
+        cfg.requestCachePolicy = .returnCacheDataElseLoad
+        self.session = URLSession(configuration: cfg, delegate: delegate, delegateQueue: nil)
+    }
+
+    public static func resolvedAvatarURL(explicitUrl: String?, email: String) -> URL? {
+        if let raw = explicitUrl?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+            if raw.lowercased().hasPrefix("http://") || raw.lowercased().hasPrefix("https://") {
+                return URL(string: raw)
+            }
+            if raw.hasPrefix("/") {
+                return URL(string: "https://identity-v2.viple.digital\(raw)")
+            }
+        }
+        let cleanEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !cleanEmail.isEmpty, cleanEmail.contains("@") else { return nil }
+        let encoded = cleanEmail.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? cleanEmail
+        return URL(string: "https://mail.live.viplenetwork.com/api/mobile/v1/mail/avatar?email=\(encoded)")
+    }
+
+    #if canImport(UIKit)
+    public func cachedImage(for key: String) -> UIImage? {
+        cache.object(forKey: key as NSString)
+    }
+
+    public func loadImage(explicitUrl: String?, email: String) async -> UIImage? {
+        guard let url = Self.resolvedAvatarURL(explicitUrl: explicitUrl, email: email) else {
+            return nil
+        }
+        let cacheKey = "\(email.lowercased())|\(url.absoluteString)" as NSString
+        if let existing = cache.object(forKey: cacheKey) {
+            return existing
+        }
+        do {
+            var req = URLRequest(url: url)
+            req.setValue("image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
+            let (data, response) = try await session.data(for: req)
+            if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+               data.count > 120,
+               let img = UIImage(data: data) {
+                cache.setObject(img, forKey: cacheKey)
+                return img
+            }
+        } catch { }
+        return nil
+    }
+    #endif
+}
 
 // MARK: - Design System & Palette « Viple Mail » (iOS 18+ / 2026 • Identité Viple Live ID)
 
@@ -121,27 +187,40 @@ public struct VipleMailHorizontalLogoView: View {
                         .font(.system(size: height * 0.56, weight: .semibold, design: .rounded))
                         .foregroundStyle(lightModeOnDarkBackground ? VipleMailPalette.azureGlow : VipleMailPalette.primary)
                 }
-                Text("VIPLE LIVE ID • @VIPLEMAIL.FR")
-                    .font(.system(size: max(8.5, height * 0.21), weight: .bold, design: .rounded))
-                    .tracking(0.6)
-                    .foregroundStyle(lightModeOnDarkBackground ? Color.white.opacity(0.78) : VipleMailPalette.inkMuted)
+                Text("Un service Viple Live")
+                    .font(.system(size: max(9.5, height * 0.24), weight: .bold, design: .rounded))
+                    .tracking(0.3)
+                    .foregroundStyle(lightModeOnDarkBackground ? Color.white.opacity(0.82) : VipleMailPalette.inkMuted)
             }
         }
     }
 }
 
-// MARK: - Avatar Expéditeur / Contact avec Badge VIP
+// MARK: - Avatar Expéditeur / Contact Synchronisé Viple Live ID avec Badge VIP
 
 public struct VipleMailAvatarView: View {
     public let name: String
     public let email: String
+    public var avatarUrl: String? = nil
     public var size: CGFloat = 44
     public var isVip: Bool = false
     public var isUnread: Bool = false
 
-    public init(name: String, email: String, size: CGFloat = 44, isVip: Bool = false, isUnread: Bool = false) {
+    #if canImport(UIKit)
+    @State private var loadedImage: UIImage? = nil
+    #endif
+
+    public init(
+        name: String,
+        email: String,
+        avatarUrl: String? = nil,
+        size: CGFloat = 44,
+        isVip: Bool = false,
+        isUnread: Bool = false
+    ) {
         self.name = name
         self.email = email
+        self.avatarUrl = avatarUrl
         self.size = size
         self.isVip = isVip
         self.isUnread = isUnread
@@ -159,18 +238,40 @@ public struct VipleMailAvatarView: View {
 
     public var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            Circle()
-                .fill(VipleMailPalette.avatarGradient(for: email.isEmpty ? name : email))
-                .frame(width: size, height: size)
-                .overlay(
-                    Text(initials)
-                        .font(.system(size: size * 0.36, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                )
-                .overlay(
-                    Circle()
-                        .stroke(isVip ? VipleMailPalette.vipGold : Color.white.opacity(0.45), lineWidth: isVip ? 2 : 1)
-                )
+            ZStack {
+                Circle()
+                    .fill(VipleMailPalette.avatarGradient(for: email.isEmpty ? name : email))
+                    .frame(width: size, height: size)
+
+                Text(initials)
+                    .font(.system(size: size * 0.36, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+
+                #if canImport(UIKit)
+                if let img = loadedImage {
+                    Image(uiImage: img)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: size, height: size)
+                        .clipShape(Circle())
+                        .transition(.opacity)
+                }
+                #endif
+            }
+            .frame(width: size, height: size)
+            .overlay(
+                Circle()
+                    .stroke(isVip ? VipleMailPalette.vipGold : Color.white.opacity(0.45), lineWidth: isVip ? 2 : 1)
+            )
+            .task(id: "\(email.lowercased())|\(avatarUrl ?? "")") {
+                #if canImport(UIKit)
+                if let img = await VipleMailAvatarImageCache.shared.loadImage(explicitUrl: avatarUrl, email: email) {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        self.loadedImage = img
+                    }
+                }
+                #endif
+            }
 
             if isVip {
                 ZStack {
