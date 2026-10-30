@@ -10,6 +10,7 @@ public struct MessageDetailView: View {
     @State private var quickReplyText: String = ""
     @State private var isSendingQuickReply: Bool = false
     @State private var showFullHeaders: Bool = false
+    @State private var isShowingMoveFolderSheet: Bool = false
 
     public init(message: VipleMailMessage) {
         self.message = message
@@ -50,12 +51,11 @@ public struct MessageDetailView: View {
                 Button {
                     vm.closeMessage()
                 } label: {
-                    HStack(spacing: 5) {
+                    HStack(spacing: 4) {
                         Image(systemName: "chevron.left")
                             .font(.system(size: 15, weight: .bold))
-                        Text(vm.activeFolderTitle)
+                        Text("Retour")
                             .font(.system(size: 15, weight: .semibold, design: .rounded))
-                            .lineLimit(1)
                     }
                 }
             }
@@ -70,21 +70,11 @@ public struct MessageDetailView: View {
                         )
                     }
                 } label: {
-                    Image(systemName: currentMessage.isStarred ? "star.fill" : "star")
-                        .foregroundStyle(currentMessage.isStarred ? VipleMailPalette.starYellow : VipleMailPalette.ink)
-                }
-
-                Button {
-                    Task {
-                        await vm.performMessageAction(
-                            messageIds: [currentMessage.id],
-                            action: "toggle_read",
-                            toast: "Marqué comme non lu"
-                        )
-                        vm.closeMessage()
-                    }
-                } label: {
-                    Image(systemName: "envelope.badge")
+                    Label(
+                        currentMessage.isStarred ? "Retirer des favoris" : "Favori",
+                        systemImage: currentMessage.isStarred ? "star.fill" : "star"
+                    )
+                    .foregroundStyle(currentMessage.isStarred ? VipleMailPalette.starYellow : VipleMailPalette.ink)
                 }
 
                 Button {
@@ -97,7 +87,7 @@ public struct MessageDetailView: View {
                         vm.closeMessage()
                     }
                 } label: {
-                    Image(systemName: "archivebox")
+                    Label("Archiver", systemImage: "archivebox")
                 }
 
                 Button(role: .destructive) {
@@ -110,10 +100,114 @@ public struct MessageDetailView: View {
                         vm.closeMessage()
                     }
                 } label: {
-                    Image(systemName: "trash")
+                    Label("Supprimer", systemImage: "trash")
                         .foregroundStyle(VipleMailPalette.danger)
                 }
+
+                Menu {
+                    Button {
+                        vm.presentComposer(.reply(currentMessage))
+                    } label: {
+                        Label("Répondre", systemImage: "arrowshape.turn.up.left")
+                    }
+
+                    Button {
+                        vm.presentComposer(.replyAll(currentMessage))
+                    } label: {
+                        Label("Répondre à tous", systemImage: "arrowshape.turn.up.left.2")
+                    }
+
+                    Button {
+                        vm.presentComposer(.forward(currentMessage))
+                    } label: {
+                        Label("Transférer", systemImage: "arrowshape.turn.up.right")
+                    }
+
+                    Divider()
+
+                    Button {
+                        Task {
+                            await vm.performMessageAction(
+                                messageIds: [currentMessage.id],
+                                action: "toggle_read",
+                                toast: "Marqué comme non lu"
+                            )
+                            vm.closeMessage()
+                        }
+                    } label: {
+                        Label("Marquer comme non lu", systemImage: "envelope.badge")
+                    }
+
+                    Button {
+                        Task {
+                            await vm.performMessageAction(
+                                messageIds: [currentMessage.id],
+                                action: "toggle_star",
+                                toast: currentMessage.isStarred ? "Retiré des favoris" : "Ajouté aux favoris ⭐"
+                            )
+                        }
+                    } label: {
+                        Label(
+                            currentMessage.isStarred ? "Retirer des favoris" : "Ajouter aux favoris",
+                            systemImage: currentMessage.isStarred ? "star.slash" : "star"
+                        )
+                    }
+
+                    Button {
+                        Task {
+                            await vm.performMessageAction(
+                                messageIds: [currentMessage.id],
+                                action: "toggle_pin",
+                                toast: currentMessage.isPinned ? "Message désépinglé" : "Message épinglé 📌"
+                            )
+                        }
+                    } label: {
+                        Label(
+                            currentMessage.isPinned ? "Désépingler" : "Épingler en haut",
+                            systemImage: currentMessage.isPinned ? "pin.slash" : "pin"
+                        )
+                    }
+
+                    Button {
+                        isShowingMoveFolderSheet = true
+                    } label: {
+                        Label("Déplacer vers un dossier...", systemImage: "folder")
+                    }
+
+                    Button {
+                        Task {
+                            await vm.performMessageAction(
+                                messageIds: [currentMessage.id],
+                                action: "spam",
+                                toast: "Déplacé dans Indésirables"
+                            )
+                            vm.closeMessage()
+                        }
+                    } label: {
+                        Label("Déplacer dans Indésirables", systemImage: "exclamationmark.shield")
+                    }
+
+                    Divider()
+
+                    Button(role: .destructive) {
+                        Task {
+                            await vm.performMessageAction(
+                                messageIds: [currentMessage.id],
+                                action: "trash",
+                                toast: "Déplacé dans la Corbeille"
+                            )
+                            vm.closeMessage()
+                        }
+                    } label: {
+                        Label("Supprimer le courrier", systemImage: "trash")
+                    }
+                } label: {
+                    Label("Plus d'actions", systemImage: "ellipsis.circle")
+                }
             }
+        }
+        .sheet(isPresented: $isShowingMoveFolderSheet) {
+            moveToFolderPickerSheet
         }
         .gesture(
             DragGesture(minimumDistance: 24, coordinateSpace: .local)
@@ -125,6 +219,46 @@ public struct MessageDetailView: View {
         )
         .task {
             await vm.openMessageAndLoadThread(message)
+        }
+    }
+
+    private var moveToFolderPickerSheet: some View {
+        NavigationStack {
+            List {
+                ForEach(vm.folders.filter { $0.id != "Starred" && $0.id != "Unread" && $0.id != "VIP" }) { folder in
+                    Button {
+                        isShowingMoveFolderSheet = false
+                        Task {
+                            await vm.performMessageAction(
+                                messageIds: [currentMessage.id],
+                                action: "move",
+                                targetFolder: folder.id,
+                                toast: "Déplacé vers \(folder.name)"
+                            )
+                            vm.closeMessage()
+                        }
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: folder.icon)
+                                .foregroundStyle(VipleMailPalette.colorFromHex(folder.colorHex))
+                                .frame(width: 28)
+                            Text(folder.name)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(VipleMailPalette.ink)
+                            Spacer()
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Déplacer vers...")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Annuler") {
+                        isShowingMoveFolderSheet = false
+                    }
+                }
+            }
         }
     }
 
