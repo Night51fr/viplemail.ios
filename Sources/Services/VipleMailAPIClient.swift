@@ -5,6 +5,23 @@ import UIKit
 
 // MARK: - Client Réseau REST Natif « Viple Mail » (Connecté à mail.live.viplenetwork.com & identity-v2.viple.digital)
 
+public final class VipleMailTLSSessionDelegate: NSObject, URLSessionDelegate, Sendable {
+    public func urlSession(
+        _ session: URLSession,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        let host = challenge.protectionSpace.host.lowercased()
+        if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+           (host.hasSuffix("viplenetwork.com") || host.hasSuffix("viple.digital") || host.hasSuffix("livria.store")),
+           let serverTrust = challenge.protectionSpace.serverTrust {
+            completionHandler(.useCredential, URLCredential(trust: serverTrust))
+            return
+        }
+        completionHandler(.performDefaultHandling, nil)
+    }
+}
+
 @MainActor
 public final class VipleMailAPIClient {
     public static let shared = VipleMailAPIClient()
@@ -14,13 +31,16 @@ public final class VipleMailAPIClient {
     public let livriaSsoBaseURL = "https://livria.store/api/mobile/v1"
 
     private let session: URLSession
+    private let tlsDelegate: VipleMailTLSSessionDelegate
     private let decoder: JSONDecoder
 
     private init() {
         let cfg = URLSessionConfiguration.default
         cfg.timeoutIntervalForRequest = 20
         cfg.timeoutIntervalForResource = 35
-        self.session = URLSession(configuration: cfg)
+        let delegate = VipleMailTLSSessionDelegate()
+        self.tlsDelegate = delegate
+        self.session = URLSession(configuration: cfg, delegate: delegate, delegateQueue: nil)
         self.decoder = JSONDecoder()
     }
 
