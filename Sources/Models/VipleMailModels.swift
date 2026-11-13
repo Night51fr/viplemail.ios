@@ -380,9 +380,38 @@ public struct VipleMailDiagnosticsPing: Codable, Sendable {
     public let service: String
     public let domain: String
     public let host: String
+    public let imapHost: String?
+    public let smtpHost: String?
+    public let autodiscoverHost: String?
     public let ssoProvider: String
     public let serverTimeUtc: String
     public let version: String
+}
+
+// MARK: - Modèles de Synchronisation & Notifications Temps Réel « Viple Mail »
+
+public struct VipleMailNotificationItem: Codable, Identifiable, Equatable, Sendable {
+    public let id: String
+    public let threadId: String
+    public let senderName: String
+    public let senderEmail: String
+    public let senderAvatarUrl: String?
+    public let subject: String
+    public let snippet: String
+    public let isVipSender: Bool
+    public let priority: String
+    public let hasAttachments: Bool
+    public let receivedAt: String
+}
+
+public struct VipleMailNotificationPollResponse: Codable, Sendable {
+    public let ok: Bool
+    public let serverTimeUtc: String?
+    public let inboxUnreadCount: Int
+    public let vipUnreadCount: Int
+    public let pushNotificationsEnabled: Bool
+    public let vipNotificationsOnly: Bool
+    public let recentUnseen: [VipleMailNotificationItem]
 }
 
 // MARK: - État du Compositeur de Courrier

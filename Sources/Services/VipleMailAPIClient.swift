@@ -3,7 +3,7 @@ import Foundation
 import UIKit
 #endif
 
-// MARK: - Client Réseau REST Natif « Viple Mail » (Connecté à mail.live.viplenetwork.com & identity-v2.viple.digital)
+// MARK: - Client Réseau REST Natif « Viple Mail » (Connecté aux serveurs officiels viplemail.fr & identity-v2.viple.digital)
 
 public final class VipleMailTLSSessionDelegate: NSObject, URLSessionDelegate, Sendable {
     public func urlSession(
@@ -13,7 +13,7 @@ public final class VipleMailTLSSessionDelegate: NSObject, URLSessionDelegate, Se
     ) {
         let host = challenge.protectionSpace.host.lowercased()
         if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
-           (host.hasSuffix("viplenetwork.com") || host.hasSuffix("viple.digital") || host.hasSuffix("livria.store")),
+           (host.hasSuffix("viplemail.fr") || host.hasSuffix("viplenetwork.com") || host.hasSuffix("viple.digital") || host.hasSuffix("livria.store")),
            let serverTrust = challenge.protectionSpace.serverTrust {
             completionHandler(.useCredential, URLCredential(trust: serverTrust))
             return
@@ -26,9 +26,18 @@ public final class VipleMailTLSSessionDelegate: NSObject, URLSessionDelegate, Se
 public final class VipleMailAPIClient {
     public static let shared = VipleMailAPIClient()
 
-    public let primaryBaseURL = "https://mail.live.viplenetwork.com/api/mobile/v1/mail"
-    public let fallbackBaseURL = "https://live.viplenetwork.com/api/mobile/v1/mail"
+    public let primaryBaseURL = "https://mail.viplemail.fr/api/mobile/v1/mail"
+    public let fallbackBaseURL = "https://viplemail.fr/api/mobile/v1/mail"
+    public let webmailBaseURL = "https://viplemail.fr"
+    public let imapHost = "imap.viplemail.fr"
+    public let imapPort = 993
+    public let smtpHost = "smtp.viplemail.fr"
+    public let smtpStartTlsPort = 587
+    public let smtpImplicitTlsPort = 465
+    public let autodiscoverHost = "autodiscover.viplemail.fr"
     public let livriaSsoBaseURL = "https://livria.store/api/mobile/v1"
+
+    public var authToken: String? = nil
 
     private let session: URLSession
     private let tlsDelegate: VipleMailTLSSessionDelegate
@@ -44,15 +53,42 @@ public final class VipleMailAPIClient {
         self.decoder = JSONDecoder()
     }
 
+    public var resolvedDeviceIdentifier: String {
+        #if canImport(UIKit)
+        if let idfv = UIDevice.current.identifierForVendor?.uuidString,
+           !idfv.isEmpty,
+           idfv != "00000000-0000-0000-0000-000000000000" {
+            UserDefaults(suiteName: "group.store.livria.shared")?.set(idfv, forKey: "viple.shared.deviceId")
+            UserDefaults.standard.set(idfv, forKey: "viple.local.deviceId")
+            return idfv
+        }
+        #endif
+        if let shared = UserDefaults(suiteName: "group.store.livria.shared")?.string(forKey: "viple.shared.deviceId"),
+           !shared.isEmpty {
+            return shared
+        }
+        if let saved = UserDefaults.standard.string(forKey: "viple.local.deviceId"), !saved.isEmpty {
+            return saved
+        }
+        let generated = UUID().uuidString
+        UserDefaults.standard.set(generated, forKey: "viple.local.deviceId")
+        return generated
+    }
+
     private func applyDeviceHeaders(to req: inout URLRequest) {
         req.setValue("Viple Mail", forHTTPHeaderField: "X-Viple-App-Name")
         req.setValue("2026.11", forHTTPHeaderField: "X-Viple-Client-Version")
         req.setValue(UUID().uuidString.lowercased(), forHTTPHeaderField: "X-Viple-Request-Id")
-        req.setValue("VipleMail-iOS/2026.11 (iPhone; iOS 18.0+; VipleLiveID)", forHTTPHeaderField: "User-Agent")
-        #if canImport(UIKit)
-        if let vendorId = UIDevice.current.identifierForVendor?.uuidString, !vendorId.isEmpty {
-            req.setValue(vendorId, forHTTPHeaderField: "X-Viple-Vendor-Id")
+        req.setValue("VipleMail-iOS/2026.11 (iPhone; iOS 18.0+; viplemail.fr)", forHTTPHeaderField: "User-Agent")
+        if let tok = authToken, !tok.isEmpty {
+            req.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization")
         }
+        let devId = resolvedDeviceIdentifier
+        if !devId.isEmpty {
+            req.setValue(devId, forHTTPHeaderField: "X-Viple-Vendor-Id")
+            req.setValue(devId, forHTTPHeaderField: "X-Viple-Device-Id")
+        }
+        #if canImport(UIKit)
         let dev = UIDevice.current
         let bounds = UIScreen.main.bounds
         let sig = "\(dev.model)|\(dev.systemName)-\(dev.systemVersion)|\(Int(bounds.width))x\(Int(bounds.height))"
@@ -131,7 +167,20 @@ public final class VipleMailAPIClient {
     }
 
     public func postRaw(_ path: String, body: [String: Any]) async throws -> [String: Any] {
-        let urlString = path.hasPrefix("http") ? path : "\(primaryBaseURL)\(path)"
+        do {
+            return try await performPostRaw(base: primaryBaseURL, path: path, body: body)
+        } catch let err as NSError where err.domain == "VipleMailAPI" {
+            throw err
+        } catch {
+            if !path.hasPrefix("http") {
+                return try await performPostRaw(base: fallbackBaseURL, path: path, body: body)
+            }
+            throw error
+        }
+    }
+
+    private func performPostRaw(base: String, path: String, body: [String: Any]) async throws -> [String: Any] {
+        let urlString = path.hasPrefix("http") ? path : "\(base)\(path)"
         guard let url = URL(string: urlString) else {
             throw URLError(.badURL)
         }
@@ -154,7 +203,13 @@ public final class VipleMailAPIClient {
     // MARK: - 1. Découverte & Synchronisation SSO Viple Live ID Inter-Applications
 
     public func discoverCrossAppAccount() async -> VipleCrossAppAccount? {
-        let items = [URLQueryItem(name: "currentApp", value: "Viple Mail")]
+        let devId = resolvedDeviceIdentifier
+        guard !devId.isEmpty else { return nil }
+        let items = [
+            URLQueryItem(name: "currentApp", value: "Viple Mail"),
+            URLQueryItem(name: "vendorId", value: devId),
+            URLQueryItem(name: "deviceId", value: devId)
+        ]
         if let res: VipleCrossAppDiscoverResponse = try? await getJSON("/sso/discover", queryItems: items),
            res.hasDetectedAccount, let acc = res.account {
             return acc
@@ -167,29 +222,40 @@ public final class VipleMailAPIClient {
     }
 
     public func announceCrossAppSession(email: String, cid: String?) async {
+        let devId = resolvedDeviceIdentifier
+        guard !devId.isEmpty else { return }
         let payload: [String: Any] = [
             "sourceApp": "Viple Mail",
             "appName": "Viple Mail",
             "email": email,
-            "cid": cid ?? ""
+            "cid": cid ?? "",
+            "vendorId": devId,
+            "deviceId": devId
         ]
         _ = try? await postRaw("/sso/announce", body: payload)
         _ = try? await postRaw("\(livriaSsoBaseURL)/sso/announce", body: payload)
     }
 
     public func clearCrossAppSession() async {
+        let devId = resolvedDeviceIdentifier
+        guard !devId.isEmpty else { return }
         let payload: [String: Any] = [
             "sourceApp": "Viple Mail",
-            "appName": "Viple Mail"
+            "appName": "Viple Mail",
+            "vendorId": devId,
+            "deviceId": devId
         ]
         _ = try? await postRaw("/sso/clear", body: payload)
         _ = try? await postRaw("\(livriaSsoBaseURL)/sso/clear", body: payload)
     }
 
     public func acceptCrossAppAccount(email: String, cid: String?) async throws -> VipleMailAuthResponse {
+        let devId = resolvedDeviceIdentifier
         return try await postJSON("/sso/accept", body: [
             "email": email,
-            "cid": cid ?? ""
+            "cid": cid ?? "",
+            "vendorId": devId,
+            "deviceId": devId
         ])
     }
 
@@ -294,5 +360,56 @@ public final class VipleMailAPIClient {
 
     public func checkDiagnosticsPing() async throws -> VipleMailDiagnosticsPing {
         return try await getJSON("/diagnostics/ping")
+    }
+
+    public func updateImapPassword(password: String) async throws -> String {
+        let res = try await postRaw("https://mail.viplemail.fr/api/v1/imap-password", body: ["password": password])
+        return (res["message"] as? String) ?? "Mot de passe IMAP/SMTP mis à jour sur imap.viplemail.fr & smtp.viplemail.fr."
+    }
+
+    // MARK: - 4. Notifications Push, Sondage Rapide IMAP & Enregistrement d'Appareil iOS
+
+    public func pollNotifications(email: String, cid: String?, limit: Int = 15) async throws -> VipleMailNotificationPollResponse {
+        var items: [URLQueryItem] = [
+            URLQueryItem(name: "email", value: email),
+            URLQueryItem(name: "limit", value: "\(limit)")
+        ]
+        if let cid, !cid.isEmpty {
+            items.append(URLQueryItem(name: "cid", value: cid))
+        }
+        return try await getJSON("/notifications/poll", queryItems: items)
+    }
+
+    public func registerDeviceForPush(
+        email: String,
+        cid: String?,
+        apnsToken: String?,
+        notificationsEnabled: Bool,
+        vipOnly: Bool
+    ) async {
+        let devId = resolvedDeviceIdentifier
+        guard !devId.isEmpty, !email.isEmpty else { return }
+        let payload: [String: Any] = [
+            "email": email,
+            "cid": cid ?? "",
+            "deviceId": devId,
+            "vendorId": devId,
+            "apnsToken": apnsToken ?? "",
+            "platform": "iOS",
+            "appVersion": "2026.11",
+            "notificationsEnabled": notificationsEnabled,
+            "vipOnly": vipOnly
+        ]
+        _ = try? await postRaw("/devices/register", body: payload)
+    }
+
+    public func unregisterDeviceForPush(email: String?) async {
+        let devId = resolvedDeviceIdentifier
+        guard !devId.isEmpty else { return }
+        _ = try? await postRaw("/devices/unregister", body: [
+            "email": email ?? "",
+            "deviceId": devId,
+            "vendorId": devId
+        ])
     }
 }

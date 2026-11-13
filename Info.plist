@@ -31,6 +31,17 @@
 	<string>Viple Mail utilise votre photothèque pour joindre des photos et documents à vos e-mails.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Viple Mail utilise l'appareil photo pour numériser un document et l'envoyer en pièce jointe.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+		<string>processing</string>
+		<string>remote-notification</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.viplenetwork.viplemail.refresh</string>
+		<string>com.viplenetwork.viplemail.processing</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

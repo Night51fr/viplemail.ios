@@ -7,7 +7,14 @@ import SwiftUI
 public final class VipleMailViewModel: ObservableObject {
     // Navigation & Onglets
     @Published public var selectedTab: Int = 0 // 0: Boîte, 1: Dossiers, 2: Contacts VIP, 3: Réglages
-    @Published public var activeFolderId: String = "Inbox"
+    @Published public var activeFolderId: String = "Inbox" {
+        didSet {
+            guard oldValue != activeFolderId, isAuthenticated else { return }
+            Task {
+                await refreshBootstrap()
+            }
+        }
+    }
     @Published public var focusedInboxSegment: Int = 0 // 0: Prioritaire (Focused), 1: Autres
     @Published public var searchQuery: String = ""
     @Published public var activeFilterChip: MailFilterChip = .all
@@ -95,10 +102,15 @@ public final class VipleMailViewModel: ObservableObject {
     private let sharedGroupDefaults = UserDefaults(suiteName: "group.store.livria.shared")
     private let savedEmailKey = "viple.mail.ios.savedEmail.v1"
     private let savedCidKey = "viple.mail.ios.savedCid.v1"
+    private let savedTokenKey = "viple.mail.ios.savedToken.v1"
 
     public init() {
         let savedEmail = defaults.string(forKey: savedEmailKey)
         let savedCid = defaults.string(forKey: savedCidKey)
+        let savedToken = defaults.string(forKey: savedTokenKey)
+        if let savedToken, !savedToken.isEmpty {
+            VipleMailAPIClient.shared.authToken = savedToken
+        }
 
         if let savedEmail, !savedEmail.isEmpty {
             self.isAuthenticated = true
@@ -140,7 +152,7 @@ public final class VipleMailViewModel: ObservableObject {
         switch activeFolderId {
         case "Inbox": return "Boîte de réception"
         case "VIP": return "Contacts VIP"
-        case "Starred": return "Favoris & Suivis"
+        case "Starred", "Flagged": return "Favoris & Suivis"
         case "Unread": return "Non lus"
         case "Sent": return "Messages envoyés"
         case "Drafts": return "Brouillons"
@@ -156,7 +168,7 @@ public final class VipleMailViewModel: ObservableObject {
         var list: [VipleMailMessage]
 
         switch activeFolderId {
-        case "Starred":
+        case "Starred", "Flagged":
             list = messages.filter { $0.isStarred && $0.folder != "Trash" && $0.folder != "Spam" }
         case "Unread":
             list = messages.filter { !$0.isRead && $0.folder != "Trash" && $0.folder != "Spam" }
@@ -263,6 +275,26 @@ public final class VipleMailViewModel: ObservableObject {
                     defaults.set(c, forKey: savedCidKey)
                 }
                 saveLocalCrossAppSession(user: user)
+                await VipleMailNotificationManager.shared.ingestBootstrapSnapshot(
+                    mailboxEmail: user.primaryAddress,
+                    unreadCount: self.unreadInboxCount,
+                    messages: self.messages,
+                    settings: self.settings
+                )
+                if self.settings.pushNotificationsEnabled {
+                    _ = await VipleMailNotificationManager.shared.requestPermissionIfNeeded(promptIfNotDetermined: true)
+                    await VipleMailAPIClient.shared.registerDeviceForPush(
+                        email: user.primaryAddress,
+                        cid: user.cid,
+                        apnsToken: VipleMailNotificationManager.shared.apnsDeviceTokenHex,
+                        notificationsEnabled: self.settings.pushNotificationsEnabled,
+                        vipOnly: self.settings.vipNotificationsOnly
+                    )
+                }
+                if let pendingId = defaults.string(forKey: "viple.mail.ios.pendingOpenMsgId"), !pendingId.isEmpty {
+                    defaults.removeObject(forKey: "viple.mail.ios.pendingOpenMsgId")
+                    await openMessageByIdFromNotification(pendingId, presentReplyComposer: false)
+                }
             } else {
                 self.isAuthenticated = false
             }
@@ -289,7 +321,7 @@ public final class VipleMailViewModel: ObservableObject {
                 authErrorMessage = res.error ?? "Identifiant Viple Live ID ou mot de passe incorrect."
                 return
             }
-            await finalizeAuthenticatedSession(user: user, welcomeToast: "Connecté à votre boîte \(user.primaryAddress)")
+            await finalizeAuthenticatedSession(user: user, token: res.token, welcomeToast: "Connecté à votre boîte \(user.primaryAddress)")
         } catch {
             authErrorMessage = error.localizedDescription
         }
@@ -323,7 +355,7 @@ public final class VipleMailViewModel: ObservableObject {
                 authErrorMessage = res.error ?? "Impossible de créer la boîte @viplemail.fr."
                 return
             }
-            await finalizeAuthenticatedSession(user: user, welcomeToast: "Bienvenue \(user.displayName) ! Votre boîte \(user.primaryAddress) est active.")
+            await finalizeAuthenticatedSession(user: user, token: res.token, welcomeToast: "Bienvenue \(user.displayName) ! Votre boîte \(user.primaryAddress) est active.")
         } catch {
             authErrorMessage = error.localizedDescription
         }
@@ -361,7 +393,7 @@ public final class VipleMailViewModel: ObservableObject {
                 return
             }
             self.pendingAppleOnboardingUserId = nil
-            await finalizeAuthenticatedSession(user: user, welcomeToast: "Connecté avec Apple sur \(user.primaryAddress)")
+            await finalizeAuthenticatedSession(user: user, token: res.token, welcomeToast: "Connecté avec Apple sur \(user.primaryAddress)")
         } catch {
             authErrorMessage = error.localizedDescription
         }
@@ -392,7 +424,7 @@ public final class VipleMailViewModel: ObservableObject {
                 return
             }
             self.pendingAppleOnboardingUserId = nil
-            await finalizeAuthenticatedSession(user: user, welcomeToast: "Votre boîte \(user.primaryAddress) est créée et liée à Apple !")
+            await finalizeAuthenticatedSession(user: user, token: res.token, welcomeToast: "Votre boîte \(user.primaryAddress) est créée et liée à Apple !")
         } catch {
             authErrorMessage = error.localizedDescription
         }
@@ -416,18 +448,24 @@ public final class VipleMailViewModel: ObservableObject {
                 return
             }
             self.pendingAppleOnboardingUserId = nil
-            await finalizeAuthenticatedSession(user: user, welcomeToast: "Compte Viple Live ID (\(user.primaryAddress)) associé à Apple !")
+            await finalizeAuthenticatedSession(user: user, token: res.token, welcomeToast: "Compte Viple Live ID (\(user.primaryAddress)) associé à Apple !")
         } catch {
             authErrorMessage = error.localizedDescription
         }
     }
 
-    private func finalizeAuthenticatedSession(user: VipleMailUser, welcomeToast: String) async {
+    private func finalizeAuthenticatedSession(user: VipleMailUser, token: String?, welcomeToast: String) async {
         self.currentUser = user
         self.isAuthenticated = true
+        self.detectedCrossAppAccount = nil
+        self.isShowingCrossAppSSOPrompt = false
         defaults.set(user.primaryAddress, forKey: savedEmailKey)
         if let cid = user.cid, !cid.isEmpty {
             defaults.set(cid, forKey: savedCidKey)
+        }
+        if let token, !token.isEmpty {
+            defaults.set(token, forKey: savedTokenKey)
+            VipleMailAPIClient.shared.authToken = token
         }
         saveLocalCrossAppSession(user: user)
         await VipleMailAPIClient.shared.announceCrossAppSession(email: user.primaryAddress, cid: user.cid)
@@ -436,8 +474,11 @@ public final class VipleMailViewModel: ObservableObject {
     }
 
     public func signOut() {
+        let oldEmail = currentEmail
         defaults.removeObject(forKey: savedEmailKey)
         defaults.removeObject(forKey: savedCidKey)
+        defaults.removeObject(forKey: savedTokenKey)
+        VipleMailAPIClient.shared.authToken = nil
         sharedGroupDefaults?.removeObject(forKey: "viple.crossapp.mail.account")
         isAuthenticated = false
         currentUser = nil
@@ -450,6 +491,7 @@ public final class VipleMailViewModel: ObservableObject {
         selectedTab = 0
         showToast("Vous êtes déconnecté de Viple Mail.")
         Task {
+            await VipleMailNotificationManager.shared.clearNotificationsOnSignOut(email: oldEmail)
             await VipleMailAPIClient.shared.clearCrossAppSession()
             await checkCrossAppVipleAccount()
         }
@@ -476,35 +518,26 @@ public final class VipleMailViewModel: ObservableObject {
     }
 
     public func checkCrossAppVipleAccount() async {
-        var candidate: VipleCrossAppAccount? = await VipleMailAPIClient.shared.discoverCrossAppAccount()
-
-        if candidate == nil {
-            for key in ["viple.crossapp.store.account", "viple.crossapp.social.account", "viple.crossapp.marketplace.account"] {
-                if let data = sharedGroupDefaults?.data(forKey: key),
-                   let decoded = try? JSONDecoder().decode(VipleCrossAppAccount.self, from: data),
-                   !decoded.email.isEmpty,
-                   !decoded.email.lowercased().hasSuffix("@guest.livria.store") {
-                    candidate = decoded
-                    break
-                }
-            }
+        // Si l'application est déjà connectée à un compte, ne JAMAIS proposer de connexion automatique
+        if isAuthenticated {
+            self.detectedCrossAppAccount = nil
+            self.isShowingCrossAppSSOPrompt = false
+            return
         }
+
+        // Recherche uniquement par concordance stricte (identifiant du téléphone + adresse IP simultanément)
+        let candidate: VipleCrossAppAccount? = await VipleMailAPIClient.shared.discoverCrossAppAccount()
 
         guard let found = candidate,
               !found.email.isEmpty,
               !found.email.lowercased().hasSuffix("@guest.livria.store") else {
-            return
-        }
-
-        if isAuthenticated, let current = currentUser,
-           current.primaryAddress.lowercased() == found.email.lowercased() {
+            self.detectedCrossAppAccount = nil
+            self.isShowingCrossAppSSOPrompt = false
             return
         }
 
         self.detectedCrossAppAccount = found
-        if !isAuthenticated {
-            self.isShowingCrossAppSSOPrompt = true
-        }
+        self.isShowingCrossAppSSOPrompt = true
     }
 
     public func acceptDetectedCrossAppAccount() async {
@@ -516,7 +549,7 @@ public final class VipleMailViewModel: ObservableObject {
             let res = try await VipleMailAPIClient.shared.acceptCrossAppAccount(email: account.email, cid: account.cid)
             if res.ok, let user = res.user {
                 self.isShowingCrossAppSSOPrompt = false
-                await finalizeAuthenticatedSession(user: user, welcomeToast: "Connecté via SSO Viple Live ID (\(user.primaryAddress))")
+                await finalizeAuthenticatedSession(user: user, token: res.token, welcomeToast: "Connecté via SSO Viple Live ID (\(user.primaryAddress))")
             }
         } catch {
             authErrorMessage = error.localizedDescription
@@ -525,11 +558,58 @@ public final class VipleMailViewModel: ObservableObject {
 
     // MARK: - 3. Lecture de Message, Fil de Conversation & Actions Rapides
 
+    public func openMessageByIdFromNotification(_ messageId: String, presentReplyComposer: Bool) async {
+        guard !messageId.isEmpty else { return }
+        self.selectedTab = 0
+        if self.activeFolderId != "Inbox" {
+            self.activeFolderId = "Inbox"
+        }
+
+        if let existing = messages.first(where: { $0.id == messageId }) {
+            if presentReplyComposer {
+                presentComposer(.reply(existing))
+            } else {
+                openMessage(existing)
+            }
+            return
+        }
+
+        guard !currentEmail.isEmpty else { return }
+        do {
+            let detail = try await VipleMailAPIClient.shared.fetchMessageDetail(
+                messageId: messageId,
+                email: currentEmail,
+                cid: currentCid
+            )
+            if detail.ok {
+                if !messages.contains(where: { $0.id == detail.message.id }) {
+                    messages.insert(detail.message, at: 0)
+                }
+                if presentReplyComposer {
+                    presentComposer(.reply(detail.message))
+                } else {
+                    openMessage(detail.message)
+                }
+                await VipleMailNotificationManager.shared.applyAppBadgeCount(
+                    settings.pushNotificationsEnabled ? unreadInboxCount : 0
+                )
+            }
+        } catch {
+            await refreshBootstrap()
+        }
+    }
+
     public func openMessageAndLoadThread(_ message: VipleMailMessage) async {
         if !message.isRead {
             if let idx = messages.firstIndex(where: { $0.id == message.id }) {
                 messages[idx].isRead = true
             }
+            if let fIdx = folders.firstIndex(where: { $0.id == "Inbox" && $0.unreadCount > 0 }) {
+                folders[fIdx].unreadCount = max(0, folders[fIdx].unreadCount - 1)
+            }
+            await VipleMailNotificationManager.shared.applyAppBadgeCount(
+                settings.pushNotificationsEnabled ? unreadInboxCount : 0
+            )
         }
         self.activeThreadMessages = messages
             .filter { !$0.threadId.isEmpty && $0.threadId == message.threadId }
@@ -916,6 +996,16 @@ public final class VipleMailViewModel: ObservableObject {
                 "pushNotificationsEnabled": settings.pushNotificationsEnabled,
                 "vipNotificationsOnly": settings.vipNotificationsOnly
             ])
+            await VipleMailAPIClient.shared.registerDeviceForPush(
+                email: currentEmail,
+                cid: currentCid,
+                apnsToken: VipleMailNotificationManager.shared.apnsDeviceTokenHex,
+                notificationsEnabled: settings.pushNotificationsEnabled,
+                vipOnly: settings.vipNotificationsOnly
+            )
+            await VipleMailNotificationManager.shared.applyAppBadgeCount(
+                settings.pushNotificationsEnabled ? unreadInboxCount : 0
+            )
             showToast((res["message"] as? String) ?? "Préférences enregistrées.")
             await refreshBootstrap()
         } catch {
@@ -930,6 +1020,22 @@ public final class VipleMailViewModel: ObservableObject {
             showToast("Serveur \(ping.host) opérationnel (\(ping.version))")
         } catch {
             showToast("Erreur diagnostic : \(error.localizedDescription)")
+        }
+    }
+
+    public func updatePersonalImapPassword(_ newPassword: String) async -> Bool {
+        let trimmed = newPassword.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 8 else {
+            showToast("Le mot de passe IMAP/SMTP doit contenir au moins 8 caractères.")
+            return false
+        }
+        do {
+            let msg = try await VipleMailAPIClient.shared.updateImapPassword(password: trimmed)
+            showToast(msg)
+            return true
+        } catch {
+            showToast(error.localizedDescription)
+            return false
         }
     }
 }

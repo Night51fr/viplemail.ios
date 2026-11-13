@@ -1,6 +1,83 @@
 import SwiftUI
+#if canImport(WebKit)
+import WebKit
+#endif
 
-// MARK: - Lecture de Courrier & Fil de Conversation « Viple Mail » (Pièces Jointes, Réponse Rapide & Actions Complètes)
+// MARK: - Lecture de Courrier & Fil de Conversation « Viple Mail » (Pièces Jointes, Rendu HTML/Texte, Réponse Rapide & Actions Complètes)
+
+#if canImport(WebKit) && canImport(UIKit)
+private struct VipleMailHTMLWebView: UIViewRepresentable {
+    let htmlBody: String
+    @Binding var dynamicHeight: CGFloat
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeUIView(context: Context) -> WKWebView {
+        let cfg = WKWebViewConfiguration()
+        let wv = WKWebView(frame: .zero, configuration: cfg)
+        wv.isOpaque = false
+        wv.backgroundColor = .clear
+        wv.scrollView.backgroundColor = .clear
+        wv.scrollView.isScrollEnabled = false
+        wv.navigationDelegate = context.coordinator
+        return wv
+    }
+
+    func updateUIView(_ uiView: WKWebView, context: Context) {
+        let wrapped = """
+        <!doctype html>
+        <html>
+        <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+        <style>
+          html, body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 15px; line-height: 1.55; color: #0d1a38; word-wrap: break-word; overflow-wrap: anywhere; background: transparent; }
+          img { max-width: 100% !important; height: auto !important; border-radius: 8px; }
+          table { max-width: 100% !important; }
+          blockquote { margin: 10px 0; padding-left: 12px; border-left: 3px solid #cbd5e1; color: #475569; }
+          a { color: #0078D4; }
+        </style>
+        </head>
+        <body>\(htmlBody)</body>
+        </html>
+        """
+        if context.coordinator.lastLoadedHTML != wrapped {
+            context.coordinator.lastLoadedHTML = wrapped
+            uiView.loadHTMLString(wrapped, baseURL: URL(string: "https://mail.viplemail.fr"))
+        }
+    }
+
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        var parent: VipleMailHTMLWebView
+        var lastLoadedHTML: String = ""
+
+        init(_ parent: VipleMailHTMLWebView) {
+            self.parent = parent
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            webView.evaluateJavaScript("document.documentElement.scrollHeight") { result, _ in
+                if let h = result as? CGFloat, h > 0 {
+                    DispatchQueue.main.async {
+                        self.parent.dynamicHeight = max(80, h + 12)
+                    }
+                }
+            }
+        }
+
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            if navigationAction.navigationType == .linkActivated, let url = navigationAction.request.url {
+                UIApplication.shared.open(url)
+                decisionHandler(.cancel)
+                return
+            }
+            decisionHandler(.allow)
+        }
+    }
+}
+#endif
 
 public struct MessageDetailView: View {
     @Environment(\.dismiss) private var dismiss
@@ -11,6 +88,7 @@ public struct MessageDetailView: View {
     @State private var isSendingQuickReply: Bool = false
     @State private var showFullHeaders: Bool = false
     @State private var isShowingMoveFolderSheet: Bool = false
+    @State private var htmlContentHeight: CGFloat = 180
 
     public init(message: VipleMailMessage) {
         self.message = message
@@ -225,7 +303,7 @@ public struct MessageDetailView: View {
     private var moveToFolderPickerSheet: some View {
         NavigationStack {
             List {
-                ForEach(vm.folders.filter { $0.id != "Starred" && $0.id != "Unread" && $0.id != "VIP" }) { folder in
+                ForEach(vm.folders.filter { $0.id != "Starred" && $0.id != "Flagged" && $0.id != "Unread" && $0.id != "VIP" }) { folder in
                     Button {
                         isShowingMoveFolderSheet = false
                         Task {
@@ -353,7 +431,7 @@ public struct MessageDetailView: View {
                         headerDetailRow(label: "Cc :", value: currentMessage.ccEmail)
                     }
                     headerDetailRow(label: "Taille :", value: currentMessage.formattedSize)
-                    headerDetailRow(label: "Sécurité :", value: "Chiffrement TLS Viple Live ID vérifié")
+                    headerDetailRow(label: "Serveur :", value: "imap.viplemail.fr:993 • TLS & DKIM vérifiés")
                 }
                 .font(.system(size: 12))
             }
@@ -420,14 +498,33 @@ public struct MessageDetailView: View {
         }
     }
 
+    private func hasRichHTML(_ raw: String) -> Bool {
+        let lower = raw.lowercased()
+        return lower.contains("<div") || lower.contains("<table") || lower.contains("<p") || lower.contains("<img") || lower.contains("<a ") || lower.contains("<ul") || lower.contains("<blockquote") || lower.contains("<h1") || lower.contains("<h2")
+    }
+
     private func messageBodyCard(_ msg: VipleMailMessage) -> some View {
         VStack(alignment: .leading, spacing: 12) {
+            #if canImport(WebKit) && canImport(UIKit)
+            if hasRichHTML(msg.bodyHtml) {
+                VipleMailHTMLWebView(htmlBody: msg.bodyHtml, dynamicHeight: $htmlContentHeight)
+                    .frame(height: htmlContentHeight)
+            } else {
+                Text(msg.plainBodyText)
+                    .font(.system(size: 15.5))
+                    .foregroundStyle(VipleMailPalette.ink)
+                    .lineSpacing(5)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            #else
             Text(msg.plainBodyText)
                 .font(.system(size: 15.5))
                 .foregroundStyle(VipleMailPalette.ink)
                 .lineSpacing(5)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
+            #endif
         }
         .vipleMailCard(cornerRadius: 20, padding: 18)
     }
@@ -456,7 +553,7 @@ public struct MessageDetailView: View {
                             .font(.system(size: 14, weight: .bold))
                             .foregroundStyle(VipleMailPalette.ink)
                             .lineLimit(1)
-                        Text("\(att.formattedSize) • Stocké sur Viple SkyDrive")
+                        Text("\(att.formattedSize) • Pièce jointe MIME (mail.viplemail.fr)")
                             .font(.system(size: 11.5))
                             .foregroundStyle(VipleMailPalette.inkMuted)
                     }

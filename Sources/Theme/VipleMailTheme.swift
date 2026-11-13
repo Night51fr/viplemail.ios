@@ -34,7 +34,7 @@ public final class VipleMailAvatarImageCache {
         let cleanEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !cleanEmail.isEmpty, cleanEmail.contains("@") else { return nil }
         let encoded = cleanEmail.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? cleanEmail
-        return URL(string: "https://mail.live.viplenetwork.com/api/mobile/v1/mail/avatar?email=\(encoded)")
+        return URL(string: "https://mail.viplemail.fr/api/mobile/v1/mail/avatar?email=\(encoded)")
     }
 
     #if canImport(UIKit)

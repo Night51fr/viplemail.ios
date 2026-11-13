@@ -54,7 +54,7 @@ public struct VipleMailAuthView: View {
                     if vm.pendingAppleOnboardingUserId != nil {
                         appleOnboardingCard
                     } else {
-                        if let detected = vm.detectedCrossAppAccount {
+                        if !vm.isAuthenticated, let detected = vm.detectedCrossAppAccount {
                             crossAppSSOBanner(account: detected)
                         }
 
