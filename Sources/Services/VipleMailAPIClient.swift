@@ -85,10 +85,10 @@ public final class VipleMailAPIClient {
 
     private func applyDeviceHeaders(to req: inout URLRequest) async {
         req.setValue("Viple Mail", forHTTPHeaderField: "X-Viple-App-Name")
-        req.setValue("2026.11.5", forHTTPHeaderField: "X-Viple-Client-Version")
+        req.setValue("2026.11.6", forHTTPHeaderField: "X-Viple-Client-Version")
         req.setValue("1.0", forHTTPHeaderField: "X-Cenelis-MailRTE-Version")
         req.setValue(UUID().uuidString.lowercased(), forHTTPHeaderField: "X-Viple-Request-Id")
-        req.setValue("VipleMail-iOS/2026.11.5 (iPhone; iOS 18.0+; mail.viplemail.fr; MailRTE/1.0)", forHTTPHeaderField: "User-Agent")
+        req.setValue("VipleMail-iOS/2026.11.6 (iPhone; iOS 18.0+; mail.viplemail.fr; MailRTE/1.0)", forHTTPHeaderField: "User-Agent")
         let currentToken = authToken ?? ""
         if !currentToken.isEmpty {
             req.setValue("Bearer \(currentToken)", forHTTPHeaderField: "Authorization")
@@ -414,6 +414,110 @@ public final class VipleMailAPIClient {
         guard let encoded = email.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               !encoded.isEmpty else { return nil }
         return URL(string: "\(webmailBaseURL)/api/v1/apple-profile.mobileconfig?email=\(encoded)")
+    }
+
+    // MARK: - 3a. Comptes E-Mail Externes (IMAP / SMTP : Gmail, Outlook, iCloud, Yahoo, Orange, OVH, Pro...)
+
+    public func fetchExternalAccounts(ownerEmail: String?, cid: String?) async throws -> ExternalMailAccountListResponse {
+        var items: [URLQueryItem] = []
+        if let ownerEmail, !ownerEmail.isEmpty {
+            items.append(URLQueryItem(name: "email", value: ownerEmail))
+        }
+        if let cid, !cid.isEmpty {
+            items.append(URLQueryItem(name: "cid", value: cid))
+        }
+        return try await getJSON("/external-accounts", queryItems: items)
+    }
+
+    public func autodiscoverExternalAccount(email: String) async throws -> ExternalMailAutodiscoverResponse {
+        return try await getJSON("/external-accounts/autodiscover", queryItems: [
+            URLQueryItem(name: "email", value: email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+        ])
+    }
+
+    public func testExternalAccount(
+        externalEmail: String,
+        imapHost: String,
+        imapPort: Int,
+        imapSecurity: String,
+        imapUsername: String,
+        imapPassword: String,
+        canSendSmtp: Bool,
+        smtpHost: String,
+        smtpPort: Int,
+        smtpSecurity: String,
+        smtpUsername: String,
+        smtpPassword: String
+    ) async throws -> ExternalMailTestResponse {
+        return try await postJSON("/external-accounts/test", body: [
+            "externalEmail": externalEmail,
+            "imapHost": imapHost,
+            "imapPort": imapPort,
+            "imapSecurity": imapSecurity,
+            "imapUsername": imapUsername,
+            "imapPassword": imapPassword,
+            "canSendSmtp": canSendSmtp,
+            "smtpHost": smtpHost,
+            "smtpPort": smtpPort,
+            "smtpSecurity": smtpSecurity,
+            "smtpUsername": smtpUsername,
+            "smtpPassword": smtpPassword
+        ])
+    }
+
+    public func addExternalAccount(
+        ownerEmail: String,
+        cid: String?,
+        externalEmail: String,
+        displayName: String,
+        providerName: String?,
+        colorHex: String?,
+        imapHost: String,
+        imapPort: Int,
+        imapSecurity: String,
+        imapUsername: String,
+        imapPassword: String,
+        canSendSmtp: Bool,
+        smtpHost: String,
+        smtpPort: Int,
+        smtpSecurity: String,
+        smtpUsername: String,
+        smtpPassword: String
+    ) async throws -> ExternalMailAccountActionResponse {
+        var body: [String: Any] = [
+            "ownerEmail": ownerEmail,
+            "cid": cid ?? "",
+            "externalEmail": externalEmail,
+            "displayName": displayName,
+            "imapHost": imapHost,
+            "imapPort": imapPort,
+            "imapSecurity": imapSecurity,
+            "imapUsername": imapUsername,
+            "imapPassword": imapPassword,
+            "canSendSmtp": canSendSmtp,
+            "smtpHost": smtpHost,
+            "smtpPort": smtpPort,
+            "smtpSecurity": smtpSecurity,
+            "smtpUsername": smtpUsername,
+            "smtpPassword": smtpPassword
+        ]
+        if let providerName, !providerName.isEmpty { body["providerName"] = providerName }
+        if let colorHex, !colorHex.isEmpty { body["colorHex"] = colorHex }
+        return try await postJSON("/external-accounts/add", body: body)
+    }
+
+    public func deleteExternalAccount(
+        ownerEmail: String,
+        cid: String?,
+        accountId: String?,
+        externalEmail: String?
+    ) async throws -> ExternalMailAccountActionResponse {
+        return try await postJSON("/external-accounts/delete", body: [
+            "ownerEmail": ownerEmail,
+            "cid": cid ?? "",
+            "accountId": accountId ?? "",
+            "externalEmail": externalEmail ?? ""
+        ])
     }
 
     // MARK: - 3b. Discussions Instantanées « Chat @viplemail.fr »

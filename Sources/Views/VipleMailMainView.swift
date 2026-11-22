@@ -39,6 +39,10 @@ public struct VipleMailMainView: View {
             ComposeMailView(mode: vm.activeComposeMode ?? .newMail())
                 .environmentObject(vm)
         }
+        .sheet(isPresented: $vm.isShowingAddExternalAccountSheet) {
+            AddExternalAccountSheet()
+                .environmentObject(vm)
+        }
     }
 
     // MARK: - Splash Screen Animé Viple Mail
@@ -196,43 +200,74 @@ public struct VipleMailMainView: View {
             Spacer()
 
             if let user = vm.currentUser {
-                if vm.availableMailboxes.count > 1 {
-                    Menu {
-                        Section("Boîtes rattachées à votre compte") {
-                            ForEach(vm.availableMailboxes, id: \.self) { mbx in
+                Menu {
+                    if (vm.hostedMailboxes.count + vm.externalAccounts.count) > 1 {
+                        Button {
+                            Task {
+                                await vm.switchActiveMailbox(to: "__all__")
+                            }
+                        } label: {
+                            Label(
+                                "Toutes les boîtes de réception",
+                                systemImage: vm.isUnifiedInboxActive ? "checkmark.circle.fill" : "tray.2.fill"
+                            )
+                        }
+                        Divider()
+                    }
+
+                    Section("Boîtes Viple & Cenelis") {
+                        ForEach(vm.hostedMailboxes, id: \.self) { mbx in
+                            Button {
+                                Task {
+                                    await vm.switchActiveMailbox(to: mbx)
+                                }
+                            } label: {
+                                Label(
+                                    mbx,
+                                    systemImage: (!vm.isUnifiedInboxActive && mbx.lowercased() == vm.currentEmail.lowercased())
+                                        ? "checkmark.circle.fill"
+                                        : "envelope.fill"
+                                )
+                            }
+                        }
+                    }
+
+                    if !vm.externalAccounts.isEmpty {
+                        Section("Boîtes e-mail externes (IMAP)") {
+                            ForEach(vm.externalAccounts) { ext in
                                 Button {
                                     Task {
-                                        await vm.switchActiveMailbox(to: mbx)
+                                        await vm.switchActiveMailbox(to: ext.email)
                                     }
                                 } label: {
                                     Label(
-                                        mbx,
-                                        systemImage: mbx.lowercased() == vm.currentEmail.lowercased()
+                                        "\(ext.email) (\(ext.providerName))",
+                                        systemImage: (!vm.isUnifiedInboxActive && ext.email.lowercased() == vm.currentEmail.lowercased())
                                             ? "checkmark.circle.fill"
-                                            : "envelope.fill"
+                                            : ext.providerIcon
                                     )
                                 }
                             }
                         }
-                        Divider()
-                        Button {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
-                                vm.selectedTab = 4
-                            }
-                        } label: {
-                            Label("Réglages & Compte", systemImage: "slider.horizontal.3")
-                        }
-                    } label: {
-                        headerAccountPill(user: user, showDropdownChevron: true)
                     }
-                } else {
+
+                    Divider()
+
+                    Button {
+                        vm.presentAddExternalAccountSheet()
+                    } label: {
+                        Label("Ajouter une boîte e-mail externe…", systemImage: "plus.circle.fill")
+                    }
+
                     Button {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
                             vm.selectedTab = 4
                         }
                     } label: {
-                        headerAccountPill(user: user, showDropdownChevron: false)
+                        Label("Réglages & Comptes", systemImage: "slider.horizontal.3")
                     }
+                } label: {
+                    headerAccountPill(user: user, showDropdownChevron: true)
                 }
             }
         }
@@ -247,12 +282,12 @@ public struct VipleMailMainView: View {
     private func headerAccountPill(user: VipleMailUser, showDropdownChevron: Bool) -> some View {
         HStack(spacing: 8) {
             VStack(alignment: .trailing, spacing: 1) {
-                Text(user.displayName)
+                Text(vm.isExternalMailboxActive ? (vm.activeExternalProviderName ?? user.displayName) : user.displayName)
                     .font(.system(size: 12.5, weight: .bold, design: .rounded))
                     .foregroundStyle(VipleMailPalette.ink)
                     .lineLimit(1)
                 HStack(spacing: 4) {
-                    Text(vm.currentEmail)
+                    Text(vm.activeMailboxDisplayLabel)
                         .font(.system(size: 10.5, weight: .semibold))
                         .foregroundStyle(VipleMailPalette.primary)
                         .lineLimit(1)
@@ -265,8 +300,8 @@ public struct VipleMailMainView: View {
             }
             VipleMailAvatarView(
                 name: user.displayName,
-                email: vm.currentEmail,
-                avatarUrl: user.avatarUrl,
+                email: vm.isUnifiedInboxActive ? vm.primaryHostedEmail : vm.currentEmail,
+                avatarUrl: vm.isExternalMailboxActive ? nil : user.avatarUrl,
                 size: 34,
                 isVip: true
             )

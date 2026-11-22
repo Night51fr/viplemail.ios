@@ -20,8 +20,11 @@ public struct MailFoldersView: View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 18) {
                 storageQuotaBannerCard
+                connectedMailboxesSection
                 systemFoldersSection
-                customFoldersSection
+                if !vm.isUnifiedInboxActive {
+                    customFoldersSection
+                }
             }
             .padding(16)
         }
@@ -32,7 +35,131 @@ public struct MailFoldersView: View {
         }
     }
 
-    // MARK: - Jauge de Stockage Cloud Viple Mail / SkyDrive (5 Go)
+    // MARK: - Sélecteur Rapide de Boîte aux Lettres (Viple, Cenelis & Boîtes Externes IMAP)
+
+    private var connectedMailboxesSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("MES BOÎTES AUX LETTRES")
+                    .font(.system(size: 11.5, weight: .black, design: .rounded))
+                    .foregroundStyle(VipleMailPalette.inkMuted)
+                Spacer()
+                Button {
+                    vm.presentAddExternalAccountSheet()
+                } label: {
+                    Label("Ajouter une boîte externe", systemImage: "plus.circle.fill")
+                        .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                        .foregroundStyle(VipleMailPalette.primary)
+                }
+            }
+
+            VStack(spacing: 8) {
+                if (vm.hostedMailboxes.count + vm.externalAccounts.count) > 1 {
+                    mailboxSwitcherRow(
+                        title: "Toutes les boîtes de réception",
+                        subtitle: "\(vm.hostedMailboxes.count + vm.externalAccounts.count) comptes synchronisés",
+                        icon: "tray.2.fill",
+                        tint: VipleMailPalette.primary,
+                        isActive: vm.isUnifiedInboxActive
+                    ) {
+                        Task {
+                            vm.selectedTab = 0
+                            await vm.switchActiveMailbox(to: "__all__")
+                        }
+                    }
+                }
+
+                ForEach(vm.hostedMailboxes, id: \.self) { mbx in
+                    let active = !vm.isUnifiedInboxActive && mbx.lowercased() == vm.currentEmail.lowercased()
+                    mailboxSwitcherRow(
+                        title: mbx,
+                        subtitle: mbx.hasSuffix("@cenelis.com") ? "Groupe Cenelis • Cenelis MailRTE" : "Viple Mail • Cenelis MailRTE",
+                        icon: "checkmark.shield.fill",
+                        tint: VipleMailPalette.primary,
+                        isActive: active
+                    ) {
+                        Task {
+                            vm.selectedTab = 0
+                            await vm.switchActiveMailbox(to: mbx)
+                        }
+                    }
+                }
+
+                ForEach(vm.externalAccounts) { ext in
+                    let active = !vm.isUnifiedInboxActive && ext.email.lowercased() == vm.currentEmail.lowercased()
+                    mailboxSwitcherRow(
+                        title: ext.email,
+                        subtitle: "\(ext.providerName) • IMAP/TLS",
+                        icon: ext.providerIcon,
+                        tint: VipleMailPalette.colorFromHex(ext.colorHex),
+                        isActive: active
+                    ) {
+                        Task {
+                            vm.selectedTab = 0
+                            await vm.switchActiveMailbox(to: ext.email)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func mailboxSwitcherRow(
+        title: String,
+        subtitle: String,
+        icon: String,
+        tint: Color,
+        isActive: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(tint.opacity(0.14))
+                        .frame(width: 38, height: 38)
+                    Image(systemName: icon)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(tint)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .foregroundStyle(VipleMailPalette.ink)
+                        .lineLimit(1)
+                    Text(subtitle)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(VipleMailPalette.inkMuted)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                if isActive {
+                    Text("ACTIVE")
+                        .font(.system(size: 9.5, weight: .black, design: .rounded))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(VipleMailPalette.primary))
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(VipleMailPalette.inkMuted)
+                }
+            }
+            .padding(11)
+            .background(RoundedRectangle(cornerRadius: 15, style: .continuous).fill(VipleMailPalette.surface))
+            .overlay(
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .stroke(isActive ? VipleMailPalette.primary : VipleMailPalette.border, lineWidth: isActive ? 1.5 : 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Jauge de Stockage Cloud Viple Mail / SkyDrive ou IMAP Externe
 
     private var storageQuotaBannerCard: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -41,17 +168,25 @@ public struct MailFoldersView: View {
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .fill(Color.white.opacity(0.18))
                         .frame(width: 46, height: 46)
-                    Image(systemName: "externaldrive.fill.badge.icloud")
+                    Image(systemName: vm.isExternalMailboxActive ? "globe.europe.africa.fill" : (vm.isUnifiedInboxActive ? "tray.2.fill" : "externaldrive.fill.badge.icloud"))
                         .font(.system(size: 20, weight: .bold))
                         .foregroundStyle(.white)
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Stockage Cloud Viple Mail & SkyDrive")
+                    Text(vm.isUnifiedInboxActive
+                         ? "Vue Unifiée • Toutes vos boîtes"
+                         : (vm.isExternalMailboxActive
+                            ? "Boîte externe • \(vm.activeExternalProviderName ?? vm.currentEmail)"
+                            : "Stockage Cloud Viple Mail & SkyDrive"))
                         .font(.system(size: 15.5, weight: .bold, design: .rounded))
                         .foregroundStyle(.white)
-                    if let quota = vm.mailboxQuota {
+                    if let quota = vm.mailboxQuota, quota.quotaBytes > 0 {
                         Text("\(quota.formattedUsed) utilisés sur \(quota.formattedQuota)")
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.86))
+                    } else if vm.isExternalMailboxActive {
+                        Text("Synchronisé en direct via IMAP/TLS (\(vm.currentEmail))")
                             .font(.system(size: 12.5, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.86))
                     } else {

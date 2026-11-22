@@ -17,6 +17,10 @@ public struct VipleMailBootstrapResponse: Codable, Sendable {
     public let availableMailboxes: [String]?
     public let chatSessions: [VipleChatSession]?
     public let chatUnreadCount: Int?
+    public let externalAccounts: [ExternalMailAccount]?
+    public let isExternalMailbox: Bool?
+    public let externalProviderName: String?
+    public let isUnifiedInbox: Bool?
 }
 
 public struct VipleMailAuthResponse: Codable, Sendable {
@@ -34,6 +38,7 @@ public struct VipleMailAuthResponse: Codable, Sendable {
     public let vipleMailAddress: String?
     public let cenelisMailAddress: String?
     public let availableMailboxes: [String]?
+    public let externalAccounts: [ExternalMailAccount]?
     public let user: VipleMailUser?
 }
 
@@ -41,11 +46,88 @@ public struct VipleMailSwitchMailboxResponse: Codable, Sendable {
     public let ok: Bool
     public let error: String?
     public let mailbox: String?
+    public let isUnifiedInbox: Bool?
+    public let isExternalMailbox: Bool?
+    public let externalProviderName: String?
     public let vipleMailAddress: String?
     public let cenelisMailAddress: String?
     public let availableMailboxes: [String]?
+    public let externalAccounts: [ExternalMailAccount]?
     public let token: String?
     public let user: VipleMailUser?
+}
+
+// MARK: - Modèles des Comptes E-Mail Externes (IMAP / SMTP : Gmail, Outlook, iCloud, Orange, OVH, Pro...)
+
+public struct ExternalMailAccount: Codable, Identifiable, Equatable, Hashable, Sendable {
+    public let id: String
+    public let email: String
+    public let displayName: String
+    public let providerName: String
+    public let colorHex: String
+    public let imapHost: String
+    public let imapPort: Int
+    public let imapSecurity: String
+    public let imapUsername: String
+    public let smtpHost: String
+    public let smtpPort: Int
+    public let smtpSecurity: String
+    public let smtpUsername: String
+    public let canSendSmtp: Bool
+    public let createdAtUtc: String
+
+    public var providerIcon: String {
+        let p = providerName.lowercased()
+        if p.contains("icloud") || p.contains("apple") { return "icloud.fill" }
+        if p.contains("gmail") || p.contains("google") { return "envelope.badge.shield.half.filled.fill" }
+        if p.contains("outlook") || p.contains("microsoft") || p.contains("365") { return "building.2.crop.circle.fill" }
+        if p.contains("yahoo") { return "at.circle.fill" }
+        if p.contains("ovh") || p.contains("ionos") || p.contains("infomaniak") || p.contains("gandi") { return "server.rack" }
+        return "globe.europe.africa.fill"
+    }
+}
+
+public struct ExternalMailAutodiscoverResponse: Codable, Sendable {
+    public let ok: Bool
+    public let email: String
+    public let providerId: String
+    public let providerName: String
+    public let colorHex: String
+    public let imapHost: String
+    public let imapPort: Int
+    public let imapSecurity: String
+    public let imapUsername: String
+    public let smtpHost: String
+    public let smtpPort: Int
+    public let smtpSecurity: String
+    public let smtpUsername: String
+    public let requiresAppPasswordHint: Bool
+    public let helpHint: String?
+}
+
+public struct ExternalMailTestResponse: Codable, Sendable {
+    public let ok: Bool
+    public let error: String?
+    public let message: String?
+    public let inboxTotal: Int?
+    public let inboxUnread: Int?
+}
+
+public struct ExternalMailAccountActionResponse: Codable, Sendable {
+    public let ok: Bool
+    public let error: String?
+    public let message: String?
+    public let fallbackMailbox: String?
+    public let token: String?
+    public let account: ExternalMailAccount?
+    public let externalAccounts: [ExternalMailAccount]?
+    public let availableMailboxes: [String]?
+}
+
+public struct ExternalMailAccountListResponse: Codable, Sendable {
+    public let ok: Bool
+    public let externalAccounts: [ExternalMailAccount]?
+    public let availableMailboxes: [String]?
 }
 
 public struct VipleMailUser: Codable, Identifiable, Equatable, Sendable {
@@ -190,6 +272,18 @@ public struct VipleMailMessage: Codable, Identifiable, Equatable, Hashable, Send
     public let encryptionLabel: String?
     public let isMailRteEncrypted: Bool?
     public let isTransportUnencrypted: Bool?
+    public let mailboxEmail: String?
+    public let isExternalMailbox: Bool?
+    public let externalProviderName: String?
+
+    public func effectiveMailboxEmail(fallback: String) -> String {
+        if let mbx = mailboxEmail?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+           !mbx.isEmpty,
+           mbx != "__all__" {
+            return mbx
+        }
+        return fallback
+    }
 
     public var isChatDelivery: Bool {
         (deliveryMode ?? "mail").lowercased() == "chat"

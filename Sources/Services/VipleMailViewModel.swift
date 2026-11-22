@@ -28,6 +28,8 @@ public final class VipleMailViewModel: ObservableObject {
     @Published public var isShowingComposeSheet: Bool = false
     @Published public var isShowingCreateFolderSheet: Bool = false
     @Published public var isShowingAddContactSheet: Bool = false
+    @Published public var isShowingAddExternalAccountSheet: Bool = false
+    @Published public var editingExternalAccount: ExternalMailAccount? = nil
 
     // État Réseau & Notifications UI
     @Published public var isInitialBootstrapping: Bool = true
@@ -53,6 +55,10 @@ public final class VipleMailViewModel: ObservableObject {
     @Published public var currentUser: VipleMailUser? = nil
     @Published public var activeMailboxAddress: String = ""
     @Published public var availableMailboxes: [String] = []
+    @Published public var externalAccounts: [ExternalMailAccount] = []
+    @Published public var isExternalMailboxActive: Bool = false
+    @Published public var activeExternalProviderName: String? = nil
+    @Published public var isUnifiedInboxActive: Bool = false
     @Published public var isSwitchingMailbox: Bool = false
     @Published public var mailboxQuota: VipleMailboxQuota? = nil
     @Published public var folders: [VipleMailFolderSummary] = []
@@ -133,6 +139,7 @@ public final class VipleMailViewModel: ObservableObject {
     private let defaults = UserDefaults.standard
     private let sharedGroupDefaults = UserDefaults(suiteName: "group.store.livria.shared")
     private let savedEmailKey = "viple.mail.ios.savedEmail.v1"
+    private let savedOwnerEmailKey = "viple.mail.ios.savedOwnerEmail.v1"
     private let savedCidKey = "viple.mail.ios.savedCid.v1"
     private let savedTokenKey = "viple.mail.ios.savedToken.v1"
 
@@ -146,6 +153,7 @@ public final class VipleMailViewModel: ObservableObject {
 
         if let savedEmail, !savedEmail.isEmpty {
             self.activeMailboxAddress = savedEmail.lowercased()
+            self.isUnifiedInboxActive = (savedEmail.lowercased() == "__all__")
             self.isAuthenticated = true
         }
 
@@ -173,6 +181,72 @@ public final class VipleMailViewModel: ObservableObject {
             return mbx
         }
         return currentUser?.primaryAddress ?? defaults.string(forKey: savedEmailKey) ?? ""
+    }
+
+    /// Adresse principale interne Viple / Cenelis du titulaire (toujours une vraie boîte hébergée, jamais `__all__` ni une boîte externe)
+    public var primaryHostedEmail: String {
+        if let u = currentUser {
+            return u.primaryAddress.lowercased()
+        }
+        if let savedOwner = defaults.string(forKey: savedOwnerEmailKey), !savedOwner.isEmpty {
+            return savedOwner.lowercased()
+        }
+        let cur = currentEmail.lowercased()
+        return cur == "__all__" ? "" : cur
+    }
+
+    /// Boîtes hébergées Viple / Cenelis rattachées au compte
+    public var hostedMailboxes: [String] {
+        let extSet = Set(externalAccounts.map { $0.email.lowercased() })
+        let base = availableMailboxes.filter { !extSet.contains($0.lowercased()) && $0.lowercased() != "__all__" }
+        if !base.isEmpty { return base }
+        let p = primaryHostedEmail
+        return p.isEmpty ? [] : [p]
+    }
+
+    /// Boîtes pouvant émettre des courriers (toutes les boîtes Viple/Cenelis + les boîtes externes ayant SMTP activé)
+    public var sendCapableMailboxes: [String] {
+        var result: [String] = []
+        for h in hostedMailboxes where !result.contains(h.lowercased()) {
+            result.append(h.lowercased())
+        }
+        for ext in externalAccounts where ext.canSendSmtp && !ext.smtpHost.isEmpty {
+            let em = ext.email.lowercased()
+            if !result.contains(em) {
+                result.append(em)
+            }
+        }
+        return result
+    }
+
+    /// Boîte d'expédition par défaut lors de l'ouverture du compositeur
+    public var defaultSendingMailbox: String {
+        let cur = currentEmail.lowercased()
+        if isUnifiedInboxActive || cur == "__all__" || cur.isEmpty {
+            return primaryHostedEmail
+        }
+        if let ext = externalAccounts.first(where: { $0.email.lowercased() == cur }) {
+            return (ext.canSendSmtp && !ext.smtpHost.isEmpty) ? ext.email.lowercased() : primaryHostedEmail
+        }
+        return cur
+    }
+
+    public var activeMailboxDisplayLabel: String {
+        if isUnifiedInboxActive || currentEmail.lowercased() == "__all__" {
+            return "Toutes les boîtes"
+        }
+        return currentEmail
+    }
+
+    public func isInternalMailbox(_ email: String) -> Bool {
+        let clean = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return clean.hasSuffix("@viplemail.fr")
+            || clean.hasSuffix("@cenelis.com")
+            || clean.hasSuffix("@viplenetwork.com")
+    }
+
+    public var isCurrentMailboxInternal: Bool {
+        !isUnifiedInboxActive && !isExternalMailboxActive && isInternalMailbox(currentEmail)
     }
 
     public var currentCid: String? {
@@ -314,17 +388,26 @@ public final class VipleMailViewModel: ObservableObject {
                 folder: activeFolderId
             )
             if res.isAuthenticated, let user = res.user {
-                let resolvedMailbox = ((res.mailbox?.emailAddress.isEmpty == false)
-                    ? res.mailbox!.emailAddress
-                    : user.primaryAddress).lowercased()
+                let unified = (res.isUnifiedInbox == true) || (res.mailbox?.emailAddress.lowercased() == "__all__")
+                let resolvedMailbox = unified
+                    ? "__all__"
+                    : ((res.mailbox?.emailAddress.isEmpty == false)
+                        ? res.mailbox!.emailAddress
+                        : user.primaryAddress).lowercased()
 
                 self.isAuthenticated = true
                 self.currentUser = user
+                self.isUnifiedInboxActive = unified
+                self.isExternalMailboxActive = (res.isExternalMailbox == true)
+                self.activeExternalProviderName = res.externalProviderName
                 self.activeMailboxAddress = resolvedMailbox
                 self.mailboxQuota = res.mailbox
                 self.folders = res.folders ?? []
                 self.messages = res.messages ?? []
                 self.contacts = res.contacts ?? []
+                if let srvExternals = res.externalAccounts {
+                    self.externalAccounts = srvExternals
+                }
                 if let srvChats = res.chatSessions {
                     self.chatSessions = srvChats
                 }
@@ -333,21 +416,28 @@ public final class VipleMailViewModel: ObservableObject {
                 } else {
                     self.chatUnreadCount = self.chatSessions.reduce(0) { $0 + $1.unreadCount }
                 }
+                let extEmails = self.externalAccounts.map { Optional($0.email) }
                 if let srvMailboxes = res.availableMailboxes, !srvMailboxes.isEmpty {
-                    self.availableMailboxes = deduplicatedMailboxes(srvMailboxes.map { Optional($0) } + [resolvedMailbox, user.vipleMailAddress, user.cenelisMailAddress])
+                    self.availableMailboxes = deduplicatedMailboxes(
+                        srvMailboxes.map { Optional($0) } + [unified ? nil : resolvedMailbox, user.vipleMailAddress, user.cenelisMailAddress] + extEmails
+                    )
                 } else {
-                    self.availableMailboxes = deduplicatedMailboxes([resolvedMailbox, user.vipleMailAddress, user.cenelisMailAddress])
+                    self.availableMailboxes = deduplicatedMailboxes(
+                        [unified ? nil : resolvedMailbox, user.vipleMailAddress, user.cenelisMailAddress] + extEmails
+                    )
                 }
                 if let srvSettings = res.settings {
                     self.settings = srvSettings
                 }
+                let ownerPrimary = user.primaryAddress.lowercased()
+                defaults.set(ownerPrimary, forKey: savedOwnerEmailKey)
                 defaults.set(resolvedMailbox, forKey: savedEmailKey)
                 if let c = user.cid, !c.isEmpty {
                     defaults.set(c, forKey: savedCidKey)
                 }
-                saveLocalCrossAppSession(user: user, activeEmail: resolvedMailbox)
+                saveLocalCrossAppSession(user: user, activeEmail: ownerPrimary)
                 await VipleMailNotificationManager.shared.ingestBootstrapSnapshot(
-                    mailboxEmail: resolvedMailbox,
+                    mailboxEmail: unified ? ownerPrimary : resolvedMailbox,
                     unreadCount: self.unreadInboxCount + self.chatUnreadCount,
                     messages: self.messages,
                     settings: self.settings
@@ -355,7 +445,7 @@ public final class VipleMailViewModel: ObservableObject {
                 if self.settings.pushNotificationsEnabled {
                     _ = await VipleMailNotificationManager.shared.requestPermissionIfNeeded(promptIfNotDetermined: true)
                     await VipleMailAPIClient.shared.registerDeviceForPush(
-                        email: resolvedMailbox,
+                        email: ownerPrimary,
                         cid: user.cid,
                         apnsToken: VipleMailNotificationManager.shared.apnsDeviceTokenHex,
                         notificationsEnabled: self.settings.pushNotificationsEnabled,
@@ -384,7 +474,7 @@ public final class VipleMailViewModel: ObservableObject {
         do {
             let res = try await VipleMailAPIClient.shared.switchMailbox(
                 to: cleanTarget,
-                currentEmail: currentEmail,
+                currentEmail: primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail,
                 cid: currentCid
             )
             guard res.ok else {
@@ -400,9 +490,15 @@ public final class VipleMailViewModel: ObservableObject {
             if let u = res.user {
                 self.currentUser = u
             }
-            if let list = res.availableMailboxes, !list.isEmpty {
-                self.availableMailboxes = deduplicatedMailboxes(list.map { Optional($0) } + [switchedAddress])
+            if let extList = res.externalAccounts {
+                self.externalAccounts = extList
             }
+            if let list = res.availableMailboxes, !list.isEmpty {
+                self.availableMailboxes = deduplicatedMailboxes(list.map { Optional($0) } + [switchedAddress == "__all__" ? nil : switchedAddress])
+            }
+            self.isUnifiedInboxActive = (res.isUnifiedInbox == true) || (switchedAddress == "__all__")
+            self.isExternalMailboxActive = (res.isExternalMailbox == true)
+            self.activeExternalProviderName = res.externalProviderName
             self.activeMailboxAddress = switchedAddress
             defaults.set(switchedAddress, forKey: savedEmailKey)
             self.openedMessage = nil
@@ -414,7 +510,7 @@ public final class VipleMailViewModel: ObservableObject {
             self.isSelectionMode = false
 
             await refreshBootstrap(email: switchedAddress, cid: currentCid)
-            showToast("Boîte active : \(switchedAddress)")
+            showToast(switchedAddress == "__all__" ? "Boîte active : Toutes les boîtes" : "Boîte active : \(switchedAddress)")
         } catch {
             showToast(error.localizedDescription)
         }
@@ -638,8 +734,9 @@ public final class VipleMailViewModel: ObservableObject {
     }
 
     public func signOut() {
-        let oldEmail = currentEmail
+        let oldEmail = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
         defaults.removeObject(forKey: savedEmailKey)
+        defaults.removeObject(forKey: savedOwnerEmailKey)
         defaults.removeObject(forKey: savedCidKey)
         defaults.removeObject(forKey: savedTokenKey)
         VipleMailAPIClient.shared.authToken = nil
@@ -648,6 +745,10 @@ public final class VipleMailViewModel: ObservableObject {
         currentUser = nil
         activeMailboxAddress = ""
         availableMailboxes = []
+        externalAccounts = []
+        isExternalMailboxActive = false
+        activeExternalProviderName = nil
+        isUnifiedInboxActive = false
         mailboxQuota = nil
         folders = []
         messages = []
@@ -798,11 +899,12 @@ public final class VipleMailViewModel: ObservableObject {
             self.activeThreadMessages = [message]
         }
 
-        guard !currentEmail.isEmpty else { return }
+        let msgMailbox = message.effectiveMailboxEmail(fallback: defaultSendingMailbox)
+        guard !msgMailbox.isEmpty else { return }
         do {
             let detail = try await VipleMailAPIClient.shared.fetchMessageDetail(
                 messageId: message.id,
-                email: currentEmail,
+                email: msgMailbox,
                 cid: currentCid
             )
             if detail.ok {
@@ -823,8 +925,19 @@ public final class VipleMailViewModel: ObservableObject {
     ) async {
         guard !currentEmail.isEmpty, !messageIds.isEmpty else { return }
 
-        // Mise à jour optimiste instantanée
+        // Regrouper les messages par boîte aux lettres source (indispensable en mode « Toutes les boîtes »)
         let idSet = Set(messageIds)
+        var idsByMailbox: [String: [String]] = [:]
+        let fallbackMbx = defaultSendingMailbox
+        for m in messages where idSet.contains(m.id) {
+            let mbx = m.effectiveMailboxEmail(fallback: fallbackMbx)
+            idsByMailbox[mbx, default: []].append(m.id)
+        }
+        if idsByMailbox.isEmpty, !fallbackMbx.isEmpty {
+            idsByMailbox[fallbackMbx] = messageIds
+        }
+
+        // Mise à jour optimiste instantanée
         for idx in messages.indices where idSet.contains(messages[idx].id) {
             switch action {
             case "mark_read":
@@ -876,15 +989,17 @@ public final class VipleMailViewModel: ObservableObject {
         }
 
         do {
-            var payload: [String: Any] = [
-                "email": currentEmail,
-                "cid": currentCid ?? "",
-                "messageIds": messageIds,
-                "action": action
-            ]
-            if let targetFolder { payload["targetFolder"] = targetFolder }
-            if let targetCategory { payload["targetCategory"] = targetCategory }
-            _ = try await VipleMailAPIClient.shared.postRaw("/messages/action", body: payload)
+            for (mbx, idsForMbx) in idsByMailbox {
+                var payload: [String: Any] = [
+                    "email": mbx,
+                    "cid": currentCid ?? "",
+                    "messageIds": idsForMbx,
+                    "action": action
+                ]
+                if let targetFolder { payload["targetFolder"] = targetFolder }
+                if let targetCategory { payload["targetCategory"] = targetCategory }
+                _ = try await VipleMailAPIClient.shared.postRaw("/messages/action", body: payload)
+            }
             await refreshBootstrap()
         } catch {
             showToast(error.localizedDescription)
@@ -983,9 +1098,11 @@ public final class VipleMailViewModel: ObservableObject {
         draftId: String?,
         isDraft: Bool,
         attachments: [VipleMailAttachment],
-        deliveryMode: String = "mail"
+        deliveryMode: String = "mail",
+        fromMailbox: String? = nil
     ) async -> Bool {
-        guard !currentEmail.isEmpty else { return false }
+        let senderMailbox = (fromMailbox?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()).flatMap { $0.isEmpty ? nil : $0 } ?? defaultSendingMailbox
+        guard !senderMailbox.isEmpty else { return false }
         isSendingMail = true
         defer { isSendingMail = false }
 
@@ -1000,7 +1117,7 @@ public final class VipleMailViewModel: ObservableObject {
         }
 
         var payload: [String: Any] = [
-            "senderEmail": currentEmail,
+            "senderEmail": senderMailbox,
             "senderCid": currentCid ?? "",
             "to": to,
             "cc": cc,
@@ -1387,7 +1504,7 @@ public final class VipleMailViewModel: ObservableObject {
         do {
             let msg = try await VipleMailAPIClient.shared.updateImapPassword(
                 password: trimmed,
-                email: currentEmail,
+                email: primaryHostedEmail,
                 cid: currentCid
             )
             showToast(msg)
@@ -1395,6 +1512,173 @@ public final class VipleMailViewModel: ObservableObject {
         } catch {
             showToast(error.localizedDescription)
             return false
+        }
+    }
+
+    // MARK: - 6. Comptes E-Mail Externes (IMAP / SMTP : Gmail, Outlook, iCloud, Orange, OVH, Pro...)
+
+    public func presentAddExternalAccountSheet(editing: ExternalMailAccount? = nil) {
+        self.editingExternalAccount = editing
+        self.isShowingAddExternalAccountSheet = true
+    }
+
+    public func autodiscoverExternalMail(email: String) async -> ExternalMailAutodiscoverResponse? {
+        let clean = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard clean.contains("@") else { return nil }
+        return try? await VipleMailAPIClient.shared.autodiscoverExternalAccount(email: clean)
+    }
+
+    public func testExternalMailConnection(
+        externalEmail: String,
+        imapHost: String,
+        imapPort: Int,
+        imapSecurity: String,
+        imapUsername: String,
+        imapPassword: String,
+        canSendSmtp: Bool,
+        smtpHost: String,
+        smtpPort: Int,
+        smtpSecurity: String,
+        smtpUsername: String,
+        smtpPassword: String
+    ) async -> (ok: Bool, message: String) {
+        do {
+            let res = try await VipleMailAPIClient.shared.testExternalAccount(
+                externalEmail: externalEmail,
+                imapHost: imapHost,
+                imapPort: imapPort,
+                imapSecurity: imapSecurity,
+                imapUsername: imapUsername,
+                imapPassword: imapPassword,
+                canSendSmtp: canSendSmtp,
+                smtpHost: smtpHost,
+                smtpPort: smtpPort,
+                smtpSecurity: smtpSecurity,
+                smtpUsername: smtpUsername,
+                smtpPassword: smtpPassword
+            )
+            if res.ok {
+                return (true, res.message ?? "Connexion IMAP/SMTP vérifiée avec succès.")
+            }
+            return (false, res.error ?? "Échec de vérification de la boîte externe.")
+        } catch {
+            return (false, error.localizedDescription)
+        }
+    }
+
+    public func addOrUpdateExternalAccount(
+        externalEmail: String,
+        displayName: String,
+        providerName: String?,
+        colorHex: String?,
+        imapHost: String,
+        imapPort: Int,
+        imapSecurity: String,
+        imapUsername: String,
+        imapPassword: String,
+        canSendSmtp: Bool,
+        smtpHost: String,
+        smtpPort: Int,
+        smtpSecurity: String,
+        smtpUsername: String,
+        smtpPassword: String,
+        openImmediately: Bool = true
+    ) async -> (ok: Bool, error: String?) {
+        let owner = primaryHostedEmail
+        guard !owner.isEmpty else {
+            return (false, "Session Viple Mail non initialisée.")
+        }
+
+        do {
+            let res = try await VipleMailAPIClient.shared.addExternalAccount(
+                ownerEmail: owner,
+                cid: currentCid,
+                externalEmail: externalEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+                displayName: displayName.trimmingCharacters(in: .whitespacesAndNewlines),
+                providerName: providerName,
+                colorHex: colorHex,
+                imapHost: imapHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+                imapPort: imapPort,
+                imapSecurity: imapSecurity,
+                imapUsername: imapUsername.trimmingCharacters(in: .whitespacesAndNewlines),
+                imapPassword: imapPassword,
+                canSendSmtp: canSendSmtp,
+                smtpHost: smtpHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+                smtpPort: smtpPort,
+                smtpSecurity: smtpSecurity,
+                smtpUsername: smtpUsername.trimmingCharacters(in: .whitespacesAndNewlines),
+                smtpPassword: smtpPassword
+            )
+
+            guard res.ok else {
+                return (false, res.error ?? "Impossible d'ajouter cette boîte e-mail externe.")
+            }
+
+            if let extList = res.externalAccounts {
+                self.externalAccounts = extList
+            }
+            if let allMbx = res.availableMailboxes {
+                self.availableMailboxes = deduplicatedMailboxes(allMbx.map { Optional($0) })
+            }
+
+            let target = (res.account?.email ?? externalEmail).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if openImmediately {
+                self.selectedTab = 0
+                self.activeFolderId = "Inbox"
+                await switchActiveMailbox(to: target)
+            } else {
+                await refreshBootstrap()
+            }
+            showToast(res.message ?? "Boîte externe \(target) connectée !")
+            return (true, nil)
+        } catch {
+            return (false, error.localizedDescription)
+        }
+    }
+
+    public func removeExternalAccount(_ account: ExternalMailAccount) async {
+        let owner = primaryHostedEmail
+        guard !owner.isEmpty else { return }
+
+        do {
+            let res = try await VipleMailAPIClient.shared.deleteExternalAccount(
+                ownerEmail: owner,
+                cid: currentCid,
+                accountId: account.id,
+                externalEmail: account.email
+            )
+            if res.ok {
+                if let extList = res.externalAccounts {
+                    self.externalAccounts = extList
+                } else {
+                    self.externalAccounts.removeAll { $0.id == account.id }
+                }
+                if let allMbx = res.availableMailboxes {
+                    self.availableMailboxes = deduplicatedMailboxes(allMbx.map { Optional($0) })
+                }
+
+                let wasActive = currentEmail.lowercased() == account.email.lowercased()
+                if wasActive {
+                    let fallback = (res.fallbackMailbox ?? primaryHostedEmail).lowercased()
+                    if let tok = res.token, !tok.isEmpty {
+                        defaults.set(tok, forKey: savedTokenKey)
+                        VipleMailAPIClient.shared.authToken = tok
+                    }
+                    self.isExternalMailboxActive = false
+                    self.activeExternalProviderName = nil
+                    self.isUnifiedInboxActive = false
+                    self.activeMailboxAddress = fallback
+                    defaults.set(fallback, forKey: savedEmailKey)
+                    await refreshBootstrap(email: fallback, cid: currentCid)
+                } else if isUnifiedInboxActive {
+                    await refreshBootstrap(email: "__all__", cid: currentCid)
+                }
+                showToast(res.message ?? "Boîte externe retirée.")
+            } else {
+                showToast(res.error ?? "Impossible de retirer cette boîte externe.")
+            }
+        } catch {
+            showToast(error.localizedDescription)
         }
     }
 }

@@ -9,6 +9,7 @@ public struct MailSettingsView: View {
     @State private var displayNameField: String = ""
     @State private var personalMessageField: String = ""
     @State private var newImapPasswordField: String = ""
+    @State private var accountPendingDeletion: ExternalMailAccount? = nil
 
     public init() {}
 
@@ -16,6 +17,7 @@ public struct MailSettingsView: View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 18) {
                 accountProfileCard
+                externalAccountsCard
                 notificationsControlCard
                 officialMailServersCard
                 inboxAndSwipeCustomizationCard
@@ -27,6 +29,26 @@ public struct MailSettingsView: View {
         }
         .background(VipleMailPalette.background)
         .navigationBarHidden(true)
+        .alert(
+            "Retirer cette boîte externe ?",
+            isPresented: Binding(
+                get: { accountPendingDeletion != nil },
+                set: { if !$0 { accountPendingDeletion = nil } }
+            ),
+            presenting: accountPendingDeletion
+        ) { acc in
+            Button("Retirer de Viple Mail", role: .destructive) {
+                accountPendingDeletion = nil
+                Task {
+                    await vm.removeExternalAccount(acc)
+                }
+            }
+            Button("Annuler", role: .cancel) {
+                accountPendingDeletion = nil
+            }
+        } message: { acc in
+            Text("L'adresse \(acc.email) ne sera plus affichée dans Viple Mail. Aucun e-mail ne sera supprimé sur le serveur \(acc.providerName).")
+        }
         .onAppear {
             displayNameField = vm.currentUser?.displayName ?? ""
             personalMessageField = vm.currentUser?.personalMessage ?? ""
@@ -43,7 +65,7 @@ public struct MailSettingsView: View {
             HStack(spacing: 14) {
                 VipleMailAvatarView(
                     name: vm.currentUser?.displayName ?? "Viple",
-                    email: vm.currentEmail,
+                    email: vm.primaryHostedEmail,
                     avatarUrl: vm.currentUser?.avatarUrl,
                     size: 58,
                     isVip: true
@@ -51,16 +73,16 @@ public struct MailSettingsView: View {
 
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
-                        Text(vm.currentUser?.displayName ?? vm.currentEmail)
+                        Text(vm.currentUser?.displayName ?? vm.primaryHostedEmail)
                             .font(.system(size: 18, weight: .black, design: .rounded))
                             .foregroundStyle(VipleMailPalette.ink)
-                        if vm.currentEmail.lowercased().hasSuffix("@cenelis.com")
-                            || vm.currentEmail.lowercased().hasSuffix("@viplenetwork.com") {
+                        if vm.primaryHostedEmail.lowercased().hasSuffix("@cenelis.com")
+                            || vm.primaryHostedEmail.lowercased().hasSuffix("@viplenetwork.com") {
                             Image(systemName: "checkmark.seal.fill")
                                 .foregroundStyle(VipleMailPalette.primary)
                         }
                     }
-                    Text(vm.currentEmail)
+                    Text(vm.activeMailboxDisplayLabel)
                         .font(.system(size: 13.5, weight: .bold))
                         .foregroundStyle(VipleMailPalette.primary)
                     if let cid = vm.currentUser?.cid, !cid.isEmpty {
@@ -72,12 +94,12 @@ public struct MailSettingsView: View {
                 Spacer()
             }
 
-            if vm.availableMailboxes.count > 1 {
+            if (vm.hostedMailboxes.count + vm.externalAccounts.count) > 1 {
                 Divider()
 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Label("Boîtes aux lettres rattachées", systemImage: "tray.2.fill")
+                        Label("Boîtes Viple & Vue unifiée", systemImage: "tray.2.fill")
                             .font(.system(size: 12.5, weight: .bold, design: .rounded))
                             .foregroundStyle(VipleMailPalette.inkSecondary)
                         Spacer()
@@ -87,8 +109,38 @@ public struct MailSettingsView: View {
                         }
                     }
 
-                    ForEach(vm.availableMailboxes, id: \.self) { mbx in
-                        let isActive = mbx.lowercased() == vm.currentEmail.lowercased()
+                    Button {
+                        Task {
+                            await vm.switchActiveMailbox(to: "__all__")
+                        }
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: vm.isUnifiedInboxActive ? "checkmark.circle.fill" : "tray.2.fill")
+                                .foregroundStyle(vm.isUnifiedInboxActive ? VipleMailPalette.primary : VipleMailPalette.inkMuted)
+                            Text("Toutes les boîtes de réception")
+                                .font(.system(size: 13.5, weight: vm.isUnifiedInboxActive ? .bold : .semibold, design: .rounded))
+                                .foregroundStyle(vm.isUnifiedInboxActive ? VipleMailPalette.primary : VipleMailPalette.ink)
+                            Spacer()
+                            if vm.isUnifiedInboxActive {
+                                Text("ACTIVE")
+                                    .font(.system(size: 9.5, weight: .black, design: .rounded))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(Capsule().fill(VipleMailPalette.primary))
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(vm.isUnifiedInboxActive ? VipleMailPalette.primary.opacity(0.10) : VipleMailPalette.surfaceSubtle)
+                        )
+                    }
+                    .disabled(vm.isSwitchingMailbox)
+
+                    ForEach(vm.hostedMailboxes, id: \.self) { mbx in
+                        let isActive = !vm.isUnifiedInboxActive && mbx.lowercased() == vm.currentEmail.lowercased()
                         Button {
                             Task {
                                 await vm.switchActiveMailbox(to: mbx)
@@ -138,6 +190,146 @@ public struct MailSettingsView: View {
                 TextField("Votre message personnel Viple Live", text: $personalMessageField)
                     .padding(11)
                     .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.surfaceSubtle))
+            }
+        }
+        .vipleMailCard(cornerRadius: 20, padding: 16)
+    }
+
+    // MARK: - Comptes E-Mail Externes (Gmail, Outlook, iCloud, Orange, OVH, Pro...)
+
+    private var externalAccountsCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Label("Boîtes e-mail externes", systemImage: "globe.europe.africa.fill")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(VipleMailPalette.ink)
+
+                Spacer()
+
+                if !vm.externalAccounts.isEmpty {
+                    Text("\(vm.externalAccounts.count)")
+                        .font(.system(size: 11.5, weight: .black, design: .rounded))
+                        .foregroundStyle(VipleMailPalette.primary)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(VipleMailPalette.primary.opacity(0.12)))
+                }
+            }
+
+            if vm.externalAccounts.isEmpty {
+                Text("Ajoutez vos autres adresses e-mail (Gmail, Outlook, iCloud, Yahoo, Orange, Free, SFR, OVH ou professionnelles) pour lire et gérer tous vos courriers dans Viple Mail.")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(VipleMailPalette.inkSecondary)
+            } else {
+                VStack(spacing: 10) {
+                    ForEach(vm.externalAccounts) { ext in
+                        let isActive = !vm.isUnifiedInboxActive && ext.email.lowercased() == vm.currentEmail.lowercased()
+                        let tint = VipleMailPalette.colorFromHex(ext.colorHex)
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(spacing: 11) {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                        .fill(tint.opacity(0.14))
+                                        .frame(width: 38, height: 38)
+                                    Image(systemName: ext.providerIcon)
+                                        .font(.system(size: 16, weight: .bold))
+                                        .foregroundStyle(tint)
+                                }
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack(spacing: 6) {
+                                        Text(ext.email)
+                                            .font(.system(size: 13.5, weight: .bold, design: .monospaced))
+                                            .foregroundStyle(VipleMailPalette.ink)
+                                            .lineLimit(1)
+                                        if isActive {
+                                            Text("ACTIVE")
+                                                .font(.system(size: 9, weight: .black, design: .rounded))
+                                                .foregroundStyle(.white)
+                                                .padding(.horizontal, 7)
+                                                .padding(.vertical, 2)
+                                                .background(Capsule().fill(VipleMailPalette.primary))
+                                        }
+                                    }
+                                    Text("\(ext.providerName) • \(ext.imapHost):\(ext.imapPort) • \(ext.canSendSmtp ? "Lecture & Envoi" : "Lecture seule")")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(VipleMailPalette.inkMuted)
+                                        .lineLimit(1)
+                                }
+
+                                Spacer()
+                            }
+
+                            HStack(spacing: 8) {
+                                Button {
+                                    Task {
+                                        vm.selectedTab = 0
+                                        await vm.switchActiveMailbox(to: ext.email)
+                                    }
+                                } label: {
+                                    Label(isActive ? "Ouvrir la boîte" : "Lire les e-mails", systemImage: "envelope.open.fill")
+                                        .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                                        .foregroundStyle(isActive ? .white : VipleMailPalette.primary)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 8)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                                .fill(isActive ? VipleMailPalette.primary : VipleMailPalette.primary.opacity(0.11))
+                                        )
+                                }
+
+                                Button {
+                                    vm.presentAddExternalAccountSheet(editing: ext)
+                                } label: {
+                                    Image(systemName: "slider.horizontal.3")
+                                        .font(.system(size: 13, weight: .bold))
+                                        .foregroundStyle(VipleMailPalette.inkSecondary)
+                                        .frame(width: 36, height: 34)
+                                        .background(RoundedRectangle(cornerRadius: 10).fill(VipleMailPalette.surface))
+                                }
+                                .accessibilityLabel("Modifier les serveurs")
+
+                                Button(role: .destructive) {
+                                    accountPendingDeletion = ext
+                                } label: {
+                                    Image(systemName: "trash")
+                                        .font(.system(size: 13, weight: .bold))
+                                        .foregroundStyle(VipleMailPalette.danger)
+                                        .frame(width: 36, height: 34)
+                                        .background(RoundedRectangle(cornerRadius: 10).fill(VipleMailPalette.danger.opacity(0.10)))
+                                }
+                                .accessibilityLabel("Retirer cette boîte externe")
+                            }
+                        }
+                        .padding(12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(isActive ? VipleMailPalette.primary.opacity(0.07) : VipleMailPalette.surfaceSubtle)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(isActive ? VipleMailPalette.primary.opacity(0.35) : VipleMailPalette.border, lineWidth: 1)
+                        )
+                    }
+                }
+            }
+
+            Button {
+                vm.presentAddExternalAccountSheet()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "plus.circle.fill")
+                    Text(vm.externalAccounts.isEmpty ? "Ajouter une adresse e-mail externe" : "Ajouter une autre boîte externe")
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .fill(VipleMailPalette.heroGradient)
+                )
             }
         }
         .vipleMailCard(cornerRadius: 20, padding: 16)

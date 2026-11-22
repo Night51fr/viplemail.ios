@@ -503,6 +503,21 @@ public struct InboxListView: View {
                     .buttonStyle(.plain)
                 }
 
+                if vm.isUnifiedInboxActive, let mbxEmail = msg.mailboxEmail, !mbxEmail.isEmpty {
+                    HStack(spacing: 5) {
+                        Image(systemName: msg.isExternalMailbox == true ? "globe.europe.africa.fill" : "envelope.badge.shield.half.filled")
+                            .font(.system(size: 9.5, weight: .bold))
+                        Text(mbxEmail)
+                            .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(VipleMailPalette.inkSecondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(VipleMailPalette.surfaceSubtle))
+                    .padding(.top, 1)
+                }
+
                 if !msg.attachments.isEmpty {
                     HStack(spacing: 6) {
                         ForEach(msg.attachments.prefix(2)) { att in
@@ -657,23 +672,40 @@ public struct InboxListView: View {
             Text("Aucun message dans « \(vm.activeFolderTitle) »")
                 .font(.system(size: 18, weight: .bold, design: .rounded))
                 .foregroundStyle(VipleMailPalette.ink)
-            Text("Votre boîte est synchronisée en direct avec votre compte Viple Live ID (\(vm.currentEmail)).")
+            Text(vm.isExternalMailboxActive
+                 ? "Votre boîte externe \(vm.currentEmail) est synchronisée en direct via IMAP sécurisé."
+                 : "Votre boîte est synchronisée en direct (\(vm.activeMailboxDisplayLabel)).")
                 .font(.system(size: 13.5))
                 .foregroundStyle(VipleMailPalette.inkSecondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 36)
 
-            Button {
-                Task {
-                    await vm.refreshBootstrap()
+            HStack(spacing: 10) {
+                Button {
+                    Task {
+                        await vm.refreshBootstrap()
+                    }
+                } label: {
+                    Label("Actualiser", systemImage: "arrow.clockwise")
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .foregroundStyle(VipleMailPalette.primary)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(Capsule().fill(VipleMailPalette.primary.opacity(0.12)))
                 }
-            } label: {
-                Label("Actualiser maintenant", systemImage: "arrow.clockwise")
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(VipleMailPalette.primary)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(Capsule().fill(VipleMailPalette.primary.opacity(0.12)))
+
+                if vm.externalAccounts.isEmpty {
+                    Button {
+                        vm.presentAddExternalAccountSheet()
+                    } label: {
+                        Label("Boîte externe", systemImage: "plus.circle.fill")
+                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(Capsule().fill(VipleMailPalette.primary))
+                    }
+                }
             }
             Spacer()
         }

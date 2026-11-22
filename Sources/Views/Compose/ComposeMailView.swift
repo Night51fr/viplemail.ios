@@ -13,6 +13,7 @@ public struct ComposeMailView: View {
     @State private var toField: String = ""
     @State private var ccField: String = ""
     @State private var bccField: String = ""
+    @State private var senderMailbox: String = ""
     @State private var isExpandedCcBccFrom: Bool = false
     @State private var subjectField: String = ""
     @State private var bodyField: String = ""
@@ -58,9 +59,15 @@ public struct ComposeMailView: View {
         }
     }
 
-    /// Extrait l'adresse @viplemail.fr unique saisie dans « À : » lorsqu'aucune copie Cc/Cci n'est renseignée
+    private var effectiveSenderEmail: String {
+        let trimmed = senderMailbox.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return trimmed.isEmpty ? vm.defaultSendingMailbox : trimmed
+    }
+
+    /// Extrait l'adresse @viplemail.fr unique saisie dans « À : » lorsqu'aucune copie Cc/Cci n'est renseignée et que l'expéditeur est une boîte interne Viple/Cenelis
     private var detectedVipleMailRecipient: String? {
         guard !isLockedClassicMailFlow,
+              vm.isInternalMailbox(effectiveSenderEmail),
               ccField.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               bccField.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
@@ -271,6 +278,9 @@ public struct ComposeMailView: View {
             .onChange(of: bccField) { _, _ in
                 syncChannelWithRecipient()
             }
+            .onChange(of: senderMailbox) { _, _ in
+                syncChannelWithRecipient()
+            }
             .onChange(of: selectedPhotoItem) { _, newItem in
                 guard let newItem else { return }
                 Task {
@@ -379,7 +389,7 @@ public struct ComposeMailView: View {
                                 .font(.system(size: 15, weight: .regular))
                                 .foregroundStyle(VipleMailPalette.inkSecondary)
 
-                            Text(vm.currentEmail)
+                            Text(effectiveSenderEmail)
                                 .font(.system(size: 15, weight: .regular))
                                 .foregroundStyle(VipleMailPalette.inkSecondary)
                                 .lineLimit(1)
@@ -468,22 +478,20 @@ public struct ComposeMailView: View {
                         if let user = vm.currentUser {
                             VipleMailAvatarView(
                                 name: user.displayName,
-                                email: vm.currentEmail,
-                                avatarUrl: vm.resolveAvatarUrl(for: vm.currentEmail, explicitUrl: user.avatarUrl),
+                                email: effectiveSenderEmail,
+                                avatarUrl: vm.resolveAvatarUrl(for: effectiveSenderEmail, explicitUrl: vm.isInternalMailbox(effectiveSenderEmail) ? user.avatarUrl : nil),
                                 size: 24,
                                 isVip: true
                             )
-                            if vm.availableMailboxes.count > 1 {
+                            if vm.sendCapableMailboxes.count > 1 {
                                 Menu {
-                                    ForEach(vm.availableMailboxes, id: \.self) { mbx in
+                                    ForEach(vm.sendCapableMailboxes, id: \.self) { mbx in
                                         Button {
-                                            Task {
-                                                await vm.switchActiveMailbox(to: mbx)
-                                            }
+                                            senderMailbox = mbx
                                         } label: {
                                             Label(
                                                 "\(user.displayName) <\(mbx)>",
-                                                systemImage: mbx.lowercased() == vm.currentEmail.lowercased()
+                                                systemImage: mbx.lowercased() == effectiveSenderEmail.lowercased()
                                                     ? "checkmark.circle.fill"
                                                     : "envelope"
                                             )
@@ -491,7 +499,7 @@ public struct ComposeMailView: View {
                                     }
                                 } label: {
                                     HStack(spacing: 5) {
-                                        Text("\(user.displayName) <\(vm.currentEmail)>")
+                                        Text("\(user.displayName) <\(effectiveSenderEmail)>")
                                             .font(.system(size: 14.5, weight: .medium))
                                             .foregroundStyle(VipleMailPalette.primary)
                                             .lineLimit(1)
@@ -501,13 +509,13 @@ public struct ComposeMailView: View {
                                     }
                                 }
                             } else {
-                                Text("\(user.displayName) <\(vm.currentEmail)>")
+                                Text("\(user.displayName) <\(effectiveSenderEmail)>")
                                     .font(.system(size: 14.5, weight: .medium))
                                     .foregroundStyle(VipleMailPalette.ink)
                                     .lineLimit(1)
                             }
                         } else {
-                            Text(vm.currentEmail)
+                            Text(effectiveSenderEmail)
                                 .font(.system(size: 15))
                                 .foregroundStyle(VipleMailPalette.ink)
                         }
@@ -1067,8 +1075,10 @@ public struct ComposeMailView: View {
     }
 
     private func populateInitialFields() {
+        let fallbackSender = vm.defaultSendingMailbox
         switch mode {
         case .newMail(let to, let subject, let forceMail):
+            senderMailbox = fallbackSender
             toField = to
             subjectField = subject
             if forceMail {
@@ -1078,6 +1088,9 @@ public struct ComposeMailView: View {
                 hasManualChannelChoice = false
             }
         case .reply(let msg):
+            senderMailbox = vm.sendCapableMailboxes.contains(msg.effectiveMailboxEmail(fallback: fallbackSender).lowercased())
+                ? msg.effectiveMailboxEmail(fallback: fallbackSender)
+                : fallbackSender
             toField = msg.senderEmail
             subjectField = msg.subject.lowercased().hasPrefix("re:") ? msg.subject : "Re: \(msg.subject)"
             threadId = msg.threadId
@@ -1086,6 +1099,9 @@ public struct ComposeMailView: View {
             deliveryChannel = .mail
             bodyField = "\n\n--- Le \(msg.formattedFullDate), \(msg.senderName) <\(msg.senderEmail)> a écrit : ---\n\(msg.plainBodyText)"
         case .replyAll(let msg):
+            senderMailbox = vm.sendCapableMailboxes.contains(msg.effectiveMailboxEmail(fallback: fallbackSender).lowercased())
+                ? msg.effectiveMailboxEmail(fallback: fallbackSender)
+                : fallbackSender
             toField = msg.senderEmail
             ccField = msg.ccEmail
             isExpandedCcBccFrom = !msg.ccEmail.isEmpty
@@ -1096,6 +1112,9 @@ public struct ComposeMailView: View {
             deliveryChannel = .mail
             bodyField = "\n\n--- Le \(msg.formattedFullDate), \(msg.senderName) <\(msg.senderEmail)> a écrit : ---\n\(msg.plainBodyText)"
         case .forward(let msg):
+            senderMailbox = vm.sendCapableMailboxes.contains(msg.effectiveMailboxEmail(fallback: fallbackSender).lowercased())
+                ? msg.effectiveMailboxEmail(fallback: fallbackSender)
+                : fallbackSender
             subjectField = msg.subject.lowercased().hasPrefix("tr:") ? msg.subject : "Tr: \(msg.subject)"
             threadId = msg.threadId
             attachments = msg.attachments
@@ -1103,6 +1122,7 @@ public struct ComposeMailView: View {
             deliveryChannel = .mail
             bodyField = "\n\n---------- Message transféré ----------\nDe : \(msg.senderName) <\(msg.senderEmail)>\nDate : \(msg.formattedFullDate)\nObjet : \(msg.subject)\nÀ : \(msg.recipientEmail)\n\n\(msg.plainBodyText)"
         case .editDraft(let draft):
+            senderMailbox = draft.effectiveMailboxEmail(fallback: fallbackSender)
             draftId = draft.id
             toField = draft.recipientEmail
             ccField = draft.ccEmail
@@ -1154,7 +1174,8 @@ public struct ComposeMailView: View {
                 draftId: draftId,
                 isDraft: false,
                 attachments: attachments,
-                deliveryMode: "mail"
+                deliveryMode: "mail",
+                fromMailbox: effectiveSenderEmail
             )
             if ok {
                 dismiss()
@@ -1177,7 +1198,8 @@ public struct ComposeMailView: View {
                 draftId: draftId,
                 isDraft: true,
                 attachments: attachments,
-                deliveryMode: "mail"
+                deliveryMode: "mail",
+                fromMailbox: effectiveSenderEmail
             )
             dismiss()
         }
