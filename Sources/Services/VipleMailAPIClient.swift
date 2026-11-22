@@ -85,9 +85,9 @@ public final class VipleMailAPIClient {
 
     private func applyDeviceHeaders(to req: inout URLRequest) {
         req.setValue("Viple Mail", forHTTPHeaderField: "X-Viple-App-Name")
-        req.setValue("2026.11.3", forHTTPHeaderField: "X-Viple-Client-Version")
+        req.setValue("2026.11.4", forHTTPHeaderField: "X-Viple-Client-Version")
         req.setValue(UUID().uuidString.lowercased(), forHTTPHeaderField: "X-Viple-Request-Id")
-        req.setValue("VipleMail-iOS/2026.11.3 (iPhone; iOS 18.0+; mail.viplemail.fr)", forHTTPHeaderField: "User-Agent")
+        req.setValue("VipleMail-iOS/2026.11.4 (iPhone; iOS 18.0+; mail.viplemail.fr)", forHTTPHeaderField: "User-Agent")
         if let tok = authToken, !tok.isEmpty {
             req.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization")
         }

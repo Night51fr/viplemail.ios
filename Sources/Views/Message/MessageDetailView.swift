@@ -302,12 +302,19 @@ public struct MessageDetailView: View {
                     isVip: currentMessage.isVipSender
                 )
 
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
                         Text(currentMessage.senderName.isEmpty ? currentMessage.senderEmail : currentMessage.senderName)
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(VipleMailPalette.ink)
                             .lineLimit(1)
+
+                        if currentMessage.shouldShowVerifiedSenderBadge {
+                            Image(systemName: "checkmark.seal.fill")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(VipleMailPalette.primary)
+                                .accessibilityLabel("Expéditeur officiel vérifié")
+                        }
 
                         if currentMessage.isVipSender {
                             Image(systemName: "star.circle.fill")
@@ -320,6 +327,22 @@ public struct MessageDetailView: View {
                         Text(currentMessage.formattedRelativeDate)
                             .font(.system(size: 13, weight: .regular))
                             .foregroundStyle(VipleMailPalette.inkMuted)
+                    }
+
+                    if let verifiedOrg = currentMessage.effectiveVerifiedOrganization {
+                        HStack(spacing: 4) {
+                            Image(systemName: "checkmark.seal.fill")
+                                .font(.system(size: 10.5))
+                            Text("Vérifiée : \(verifiedOrg)")
+                                .font(.system(size: 11.5, weight: .semibold))
+                        }
+                        .foregroundStyle(VipleMailPalette.primary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2.5)
+                        .background(
+                            Capsule()
+                                .fill(VipleMailPalette.primary.opacity(0.10))
+                        )
                     }
 
                     HStack(alignment: .center, spacing: 6) {
@@ -346,19 +369,25 @@ public struct MessageDetailView: View {
                                 .foregroundStyle(VipleMailPalette.primary)
                         }
                     }
+
+                    // Ligne compacte « Sécurité » toujours lisible sous le destinataire
+                    securitySummaryInlineRow
                 }
             }
 
             if showFullHeaders {
                 VStack(alignment: .leading, spacing: 6) {
                     rfcHeaderRow(label: "De :", value: "\(currentMessage.senderName) <\(currentMessage.senderEmail)>")
+                    if let verifiedOrg = currentMessage.effectiveVerifiedOrganization {
+                        rfcHeaderRow(label: "Entité :", value: "Vérifiée : \(verifiedOrg)")
+                    }
                     rfcHeaderRow(label: "À :", value: currentMessage.recipientEmail)
                     if !currentMessage.ccEmail.isEmpty {
                         rfcHeaderRow(label: "Cc :", value: currentMessage.ccEmail)
                     }
                     rfcHeaderRow(label: "Date :", value: currentMessage.formattedFullDate)
                     rfcHeaderRow(label: "Dossier :", value: "\(currentMessage.folder) • \(currentMessage.formattedSize)")
-                    rfcHeaderRow(label: "Sécurité :", value: "TLS chiffré • DKIM vérifié (imap.viplemail.fr)")
+                    rfcSecurityHeaderRow
                 }
                 .font(.system(size: 12.5))
                 .padding(12)
@@ -370,6 +399,62 @@ public struct MessageDetailView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 13)
+    }
+
+    private var securitySummaryInlineRow: some View {
+        HStack(spacing: 4) {
+            Image(systemName: currentMessage.isTransportUnencrypted == true ? "lock.open.fill" : "lock.fill")
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(
+                    currentMessage.isTransportUnencrypted == true
+                        ? VipleMailPalette.danger
+                        : (currentMessage.effectiveIsMailRteSecurity ? VipleMailPalette.primary : VipleMailPalette.inkMuted)
+                )
+
+            Text("Sécurité : \(currentMessage.effectiveEncryptionLabel)")
+                .font(.system(size: 12, weight: currentMessage.effectiveIsMailRteSecurity ? .semibold : .regular))
+                .foregroundStyle(
+                    currentMessage.isTransportUnencrypted == true
+                        ? VipleMailPalette.danger
+                        : (currentMessage.effectiveIsMailRteSecurity ? VipleMailPalette.primary : VipleMailPalette.inkMuted)
+                )
+                .lineLimit(1)
+
+            if currentMessage.effectiveIsMailRteSecurity {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(VipleMailPalette.primary)
+                    .accessibilityLabel("Chiffrement Cenelis MailRTE vérifié")
+            }
+        }
+        .padding(.top, 1)
+    }
+
+    private var rfcSecurityHeaderRow: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text("Sécurité :")
+                .foregroundStyle(VipleMailPalette.inkMuted)
+                .frame(width: 68, alignment: .trailing)
+
+            HStack(spacing: 5) {
+                Text(currentMessage.effectiveEncryptionLabel)
+                    .fontWeight(currentMessage.effectiveIsMailRteSecurity ? .semibold : .regular)
+                    .foregroundStyle(
+                        currentMessage.isTransportUnencrypted == true
+                            ? VipleMailPalette.danger
+                            : (currentMessage.effectiveIsMailRteSecurity ? VipleMailPalette.primary : VipleMailPalette.ink)
+                    )
+                    .textSelection(.enabled)
+
+                if currentMessage.effectiveIsMailRteSecurity {
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(VipleMailPalette.primary)
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
     }
 
     private func rfcHeaderRow(label: String, value: String) -> some View {

@@ -447,6 +447,12 @@ public struct InboxListView: View {
                         .foregroundStyle(VipleMailPalette.ink)
                         .lineLimit(1)
 
+                    if msg.folder != "Sent" && msg.shouldShowVerifiedSenderBadge {
+                        Image(systemName: "checkmark.seal.fill")
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(VipleMailPalette.primary)
+                    }
+
                     if msg.isVipSender {
                         Text("VIP")
                             .font(.system(size: 9.5, weight: .black, design: .rounded))

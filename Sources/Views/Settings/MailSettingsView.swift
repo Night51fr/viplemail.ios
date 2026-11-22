@@ -54,8 +54,11 @@ public struct MailSettingsView: View {
                         Text(vm.currentUser?.displayName ?? vm.currentEmail)
                             .font(.system(size: 18, weight: .black, design: .rounded))
                             .foregroundStyle(VipleMailPalette.ink)
-                        Image(systemName: "checkmark.seal.fill")
-                            .foregroundStyle(VipleMailPalette.primary)
+                        if vm.currentEmail.lowercased().hasSuffix("@cenelis.com")
+                            || vm.currentEmail.lowercased().hasSuffix("@viplenetwork.com") {
+                            Image(systemName: "checkmark.seal.fill")
+                                .foregroundStyle(VipleMailPalette.primary)
+                        }
                     }
                     Text(vm.currentEmail)
                         .font(.system(size: 13.5, weight: .bold))

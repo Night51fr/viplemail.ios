@@ -185,9 +185,67 @@ public struct VipleMailMessage: Codable, Identifiable, Equatable, Hashable, Send
     public let senderAvatarUrl: String?
     public let recipientAvatarUrl: String?
     public let deliveryMode: String?
+    public let isVerifiedSender: Bool?
+    public let verifiedOrganization: String?
+    public let encryptionLabel: String?
+    public let isMailRteEncrypted: Bool?
+    public let isTransportUnencrypted: Bool?
 
     public var isChatDelivery: Bool {
         (deliveryMode ?? "mail").lowercased() == "chat"
+    }
+
+    private var normalizedSenderDomain: String {
+        let clean = senderEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard let at = clean.lastIndex(of: "@") else { return "" }
+        return String(clean[clean.index(after: at)...])
+    }
+
+    /// Badge expéditeur vérifié : UNIQUEMENT pour @viplenetwork.com / @cenelis.com (« Cenelis SA ») ou un service officiel authentifié par DKIM/DMARC (ex : « Facebook Inc »). Jamais pour @viplemail.fr.
+    public var effectiveVerifiedOrganization: String? {
+        let dom = normalizedSenderDomain
+        if dom == "viplemail.fr" || dom.hasSuffix(".viplemail.fr") {
+            return nil
+        }
+        if let srvVerified = isVerifiedSender {
+            guard srvVerified else { return nil }
+            if let org = verifiedOrganization, !org.isEmpty {
+                return org
+            }
+            if dom == "cenelis.com" || dom.hasSuffix(".cenelis.com") || dom == "viplenetwork.com" || dom.hasSuffix(".viplenetwork.com") {
+                return "Cenelis SA"
+            }
+            return nil
+        }
+        if dom == "cenelis.com" || dom.hasSuffix(".cenelis.com") || dom == "viplenetwork.com" || dom.hasSuffix(".viplenetwork.com") {
+            return "Cenelis SA"
+        }
+        return nil
+    }
+
+    public var shouldShowVerifiedSenderBadge: Bool {
+        effectiveVerifiedOrganization != nil
+    }
+
+    /// Sécurité MailRTE : @viplemail.fr, @viplenetwork.com et @cenelis.com utilisent « Chiffrement Cenelis MailRTE » (logo vérifié affiché uniquement dans la section « Sécurité »).
+    public var effectiveIsMailRteSecurity: Bool {
+        if let srvRte = isMailRteEncrypted {
+            return srvRte
+        }
+        let dom = normalizedSenderDomain
+        return dom == "viplemail.fr" || dom.hasSuffix(".viplemail.fr")
+            || dom == "cenelis.com" || dom.hasSuffix(".cenelis.com")
+            || dom == "viplenetwork.com" || dom.hasSuffix(".viplenetwork.com")
+    }
+
+    public var effectiveEncryptionLabel: String {
+        if let lbl = encryptionLabel, !lbl.isEmpty {
+            return lbl
+        }
+        if effectiveIsMailRteSecurity {
+            return "Chiffrement Cenelis MailRTE"
+        }
+        return "Transport SMTP standard"
     }
 
     public var hasAttachments: Bool {
