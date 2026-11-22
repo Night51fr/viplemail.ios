@@ -227,15 +227,10 @@ public struct VipleMailMessage: Codable, Identifiable, Equatable, Hashable, Send
         effectiveVerifiedOrganization != nil
     }
 
-    /// Sécurité MailRTE : @viplemail.fr, @viplenetwork.com et @cenelis.com utilisent « Chiffrement Cenelis MailRTE » (logo vérifié affiché uniquement dans la section « Sécurité »).
+    /// Sécurité MailRTE : uniquement vrai lorsque la signature hybride Ed25519+ML-DSA-65,
+    /// la désencapsulation X25519+ML-KEM-768 et les tags AES-256-GCM du conteneur .mrte ont été vérifiés.
     public var effectiveIsMailRteSecurity: Bool {
-        if let srvRte = isMailRteEncrypted {
-            return srvRte
-        }
-        let dom = normalizedSenderDomain
-        return dom == "viplemail.fr" || dom.hasSuffix(".viplemail.fr")
-            || dom == "cenelis.com" || dom.hasSuffix(".cenelis.com")
-            || dom == "viplenetwork.com" || dom.hasSuffix(".viplenetwork.com")
+        isMailRteEncrypted == true
     }
 
     public var effectiveEncryptionLabel: String {

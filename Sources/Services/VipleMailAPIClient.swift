@@ -83,13 +83,23 @@ public final class VipleMailAPIClient {
         return generated
     }
 
-    private func applyDeviceHeaders(to req: inout URLRequest) {
+    private func applyDeviceHeaders(to req: inout URLRequest) async {
         req.setValue("Viple Mail", forHTTPHeaderField: "X-Viple-App-Name")
-        req.setValue("2026.11.4", forHTTPHeaderField: "X-Viple-Client-Version")
+        req.setValue("2026.11.5", forHTTPHeaderField: "X-Viple-Client-Version")
+        req.setValue("1.0", forHTTPHeaderField: "X-Cenelis-MailRTE-Version")
         req.setValue(UUID().uuidString.lowercased(), forHTTPHeaderField: "X-Viple-Request-Id")
-        req.setValue("VipleMail-iOS/2026.11.4 (iPhone; iOS 18.0+; mail.viplemail.fr)", forHTTPHeaderField: "User-Agent")
-        if let tok = authToken, !tok.isEmpty {
-            req.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization")
+        req.setValue("VipleMail-iOS/2026.11.5 (iPhone; iOS 18.0+; mail.viplemail.fr; MailRTE/1.0)", forHTTPHeaderField: "User-Agent")
+        let currentToken = authToken ?? ""
+        if !currentToken.isEmpty {
+            req.setValue("Bearer \(currentToken)", forHTTPHeaderField: "Authorization")
+        }
+        if let targetURL = req.url,
+           let dpopJwt = try? await AppAttestManager.shared.buildDpopProofJwt(
+               httpMethod: req.httpMethod ?? "GET",
+               targetURL: targetURL,
+               accessToken: currentToken
+           ) {
+            req.setValue(dpopJwt, forHTTPHeaderField: "DPoP")
         }
         let devId = resolvedDeviceIdentifier
         if !devId.isEmpty {
@@ -126,12 +136,12 @@ public final class VipleMailAPIClient {
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
         req.setValue("application/json", forHTTPHeaderField: "Accept")
-        applyDeviceHeaders(to: &req)
+        await applyDeviceHeaders(to: &req)
 
         let (data, response) = try await session.data(for: req)
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-            if let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let msg = dict["error"] as? String {
+            if let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                let msg = (dict["message"] as? String) ?? (dict["error"] as? String) ?? "Erreur serveur Viple Mail (\(http.statusCode))"
                 throw NSError(domain: "VipleMailAPI", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: msg])
             }
             throw NSError(domain: "VipleMailAPI", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "Erreur serveur Viple Mail (\(http.statusCode))"])
@@ -160,13 +170,13 @@ public final class VipleMailAPIClient {
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
-        applyDeviceHeaders(to: &req)
+        await applyDeviceHeaders(to: &req)
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await session.data(for: req)
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-            if let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let msg = dict["error"] as? String {
+            if let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                let msg = (dict["message"] as? String) ?? (dict["error"] as? String) ?? "Erreur serveur Viple Mail (\(http.statusCode))"
                 throw NSError(domain: "VipleMailAPI", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: msg])
             }
             throw NSError(domain: "VipleMailAPI", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "Erreur serveur Viple Mail (\(http.statusCode))"])
@@ -196,13 +206,13 @@ public final class VipleMailAPIClient {
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
-        applyDeviceHeaders(to: &req)
+        await applyDeviceHeaders(to: &req)
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await session.data(for: req)
         let dict = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-            let msg = (dict["error"] as? String) ?? "Impossible d'exécuter l'opération sur Viple Mail."
+            let msg = (dict["message"] as? String) ?? (dict["error"] as? String) ?? "Impossible d'exécuter l'opération sur Viple Mail."
             throw NSError(domain: "VipleMailAPI", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: msg])
         }
         return dict
