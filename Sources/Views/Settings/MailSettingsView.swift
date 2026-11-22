@@ -69,6 +69,56 @@ public struct MailSettingsView: View {
                 Spacer()
             }
 
+            if vm.availableMailboxes.count > 1 {
+                Divider()
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Label("Boîtes aux lettres rattachées", systemImage: "tray.2.fill")
+                            .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                            .foregroundStyle(VipleMailPalette.inkSecondary)
+                        Spacer()
+                        if vm.isSwitchingMailbox {
+                            ProgressView()
+                                .scaleEffect(0.75)
+                        }
+                    }
+
+                    ForEach(vm.availableMailboxes, id: \.self) { mbx in
+                        let isActive = mbx.lowercased() == vm.currentEmail.lowercased()
+                        Button {
+                            Task {
+                                await vm.switchActiveMailbox(to: mbx)
+                            }
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(isActive ? VipleMailPalette.primary : VipleMailPalette.inkMuted)
+                                Text(mbx)
+                                    .font(.system(size: 13.5, weight: isActive ? .bold : .semibold, design: .monospaced))
+                                    .foregroundStyle(isActive ? VipleMailPalette.primary : VipleMailPalette.ink)
+                                Spacer()
+                                if isActive {
+                                    Text("ACTIVE")
+                                        .font(.system(size: 9.5, weight: .black, design: .rounded))
+                                        .foregroundStyle(.white)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 3)
+                                        .background(Capsule().fill(VipleMailPalette.primary))
+                                }
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 9)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(isActive ? VipleMailPalette.primary.opacity(0.10) : VipleMailPalette.surfaceSubtle)
+                            )
+                        }
+                        .disabled(vm.isSwitchingMailbox)
+                    }
+                }
+            }
+
             Divider()
 
             VStack(alignment: .leading, spacing: 8) {
@@ -221,21 +271,21 @@ public struct MailSettingsView: View {
 
     private var officialMailServersCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("Serveurs officiels viplemail.fr (IMAP & SMTP)", systemImage: "server.rack")
+            Label("Serveurs officiels viplemail.fr & cenelis.com", systemImage: "server.rack")
                 .font(.system(size: 15, weight: .bold, design: .rounded))
                 .foregroundStyle(VipleMailPalette.ink)
 
             VStack(spacing: 8) {
-                serverRow(title: "Serveur IMAP (SSL/TLS)", value: "imap.viplemail.fr : 993")
-                serverRow(title: "Serveur SMTP (STARTTLS / SSL)", value: "smtp.viplemail.fr : 587 / 465")
-                serverRow(title: "Passerelle MX & Webmail", value: "mail.viplemail.fr")
-                serverRow(title: "Autodiscover", value: "autodiscover.viplemail.fr")
+                serverRow(title: "API Mobile & Webmail", value: "mail.viplemail.fr")
+                serverRow(title: "Serveur IMAP (SSL/TLS)", value: "\(VipleMailAPIClient.shared.imapHost) : \(VipleMailAPIClient.shared.imapPort)")
+                serverRow(title: "Serveur SMTP (STARTTLS / SSL)", value: "\(VipleMailAPIClient.shared.smtpHost) : \(VipleMailAPIClient.shared.smtpStartTlsPort) / \(VipleMailAPIClient.shared.smtpImplicitTlsPort)")
+                serverRow(title: "SSO Viple / Cenelis", value: "identity-v2.viple.digital / sso.prod.cenelis.com")
+                serverRow(title: "Autodiscover", value: VipleMailAPIClient.shared.autodiscoverHost)
             }
             .padding(12)
             .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.surfaceSubtle))
 
-            if let encodedEmail = vm.currentEmail.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-               let profileUrl = URL(string: "https://mail.viplemail.fr/api/v1/apple-profile.mobileconfig?email=\(encodedEmail)") {
+            if let profileUrl = VipleMailAPIClient.shared.appleProfileDownloadURL(for: vm.currentEmail) {
                 Link(destination: profileUrl) {
                     HStack(spacing: 8) {
                         Image(systemName: "iphone.and.arrow.forward")

@@ -331,7 +331,7 @@ public struct ComposeMailView: View {
                 Divider()
                     .padding(.leading, 16)
 
-                // Ligne « De : » avec photo de profil synchronisée
+                // Ligne « De : » avec photo de profil synchronisée et sélection de boîte (@viplemail.fr / @cenelis.com)
                 HStack(spacing: 10) {
                     Text("De :")
                         .font(.system(size: 15, weight: .regular))
@@ -341,15 +341,44 @@ public struct ComposeMailView: View {
                     if let user = vm.currentUser {
                         VipleMailAvatarView(
                             name: user.displayName,
-                            email: user.primaryAddress,
-                            avatarUrl: vm.resolveAvatarUrl(for: user.primaryAddress, explicitUrl: user.avatarUrl),
+                            email: vm.currentEmail,
+                            avatarUrl: vm.resolveAvatarUrl(for: vm.currentEmail, explicitUrl: user.avatarUrl),
                             size: 24,
                             isVip: true
                         )
-                        Text("\(user.displayName) <\(user.primaryAddress)>")
-                            .font(.system(size: 14.5, weight: .medium))
-                            .foregroundStyle(VipleMailPalette.ink)
-                            .lineLimit(1)
+                        if vm.availableMailboxes.count > 1 {
+                            Menu {
+                                ForEach(vm.availableMailboxes, id: \.self) { mbx in
+                                    Button {
+                                        Task {
+                                            await vm.switchActiveMailbox(to: mbx)
+                                        }
+                                    } label: {
+                                        Label(
+                                            "\(user.displayName) <\(mbx)>",
+                                            systemImage: mbx.lowercased() == vm.currentEmail.lowercased()
+                                                ? "checkmark.circle.fill"
+                                                : "envelope"
+                                        )
+                                    }
+                                }
+                            } label: {
+                                HStack(spacing: 5) {
+                                    Text("\(user.displayName) <\(vm.currentEmail)>")
+                                        .font(.system(size: 14.5, weight: .medium))
+                                        .foregroundStyle(VipleMailPalette.primary)
+                                        .lineLimit(1)
+                                    Image(systemName: "chevron.up.chevron.down")
+                                        .font(.system(size: 11, weight: .bold))
+                                        .foregroundStyle(VipleMailPalette.primary)
+                                }
+                            }
+                        } else {
+                            Text("\(user.displayName) <\(vm.currentEmail)>")
+                                .font(.system(size: 14.5, weight: .medium))
+                                .foregroundStyle(VipleMailPalette.ink)
+                                .lineLimit(1)
+                        }
                     } else {
                         Text(vm.currentEmail)
                             .font(.system(size: 15))

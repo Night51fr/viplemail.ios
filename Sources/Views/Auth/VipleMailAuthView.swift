@@ -111,12 +111,12 @@ public struct VipleMailAuthView: View {
             }
 
             VStack(spacing: 8) {
-                Text("Votre messagerie officielle @viplemail.fr")
-                    .font(.system(size: 26, weight: .black, design: .rounded))
+                Text("Votre messagerie officielle @viplemail.fr & @cenelis.com")
+                    .font(.system(size: 25, weight: .black, design: .rounded))
                     .foregroundStyle(.white)
                     .multilineTextAlignment(.center)
 
-                Text("Synchronisation instantanée avec votre compte Viple Live ID, 5 Go de stockage Cloud SkyDrive, boîte de réception Prioritaire et carnet d'adresses VIP.")
+                Text("Connectée en direct à mail.viplemail.fr (Stalwart Mail Server), au SSO Viple Live ID et à Cenelis Connect, avec 5 Go de stockage, boîte Prioritaire et carnet VIP.")
                     .font(.system(size: 13.5, weight: .medium))
                     .foregroundStyle(.white.opacity(0.88))
                     .multilineTextAlignment(.center)
@@ -241,10 +241,10 @@ public struct VipleMailAuthView: View {
                     .font(.title3)
                     .foregroundStyle(VipleMailPalette.primary)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Connexion Viple Live ID")
+                    Text("Connexion Viple Live ID & Cenelis")
                         .font(.system(size: 18, weight: .bold, design: .rounded))
                         .foregroundStyle(VipleMailPalette.ink)
-                    Text("Saisissez votre adresse @viplemail.fr ou votre identifiant Viple")
+                    Text("Saisissez votre adresse @viplemail.fr, @cenelis.com ou votre identifiant SSO")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(VipleMailPalette.inkSecondary)
                 }
@@ -267,14 +267,14 @@ public struct VipleMailAuthView: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Adresse @viplemail.fr ou identifiant")
+                Text("Adresse @viplemail.fr, @cenelis.com ou identifiant")
                     .font(.system(size: 12.5, weight: .bold))
                     .foregroundStyle(VipleMailPalette.inkSecondary)
 
                 HStack(spacing: 10) {
                     Image(systemName: "at")
                         .foregroundStyle(VipleMailPalette.primary)
-                    TextField("ex: prenom.nom@viplemail.fr", text: $loginEmail)
+                    TextField("ex: prenom@viplemail.fr ou agent@cenelis.com", text: $loginEmail)
                         .textInputAutocapitalization(.never)
                         .keyboardType(.emailAddress)
                         .autocorrectionDisabled()
@@ -495,7 +495,7 @@ public struct VipleMailAuthView: View {
             }
 
             if appleLinkExistingMode {
-                TextField("Adresse @viplemail.fr existante", text: $appleExistingEmail)
+                TextField("Adresse @viplemail.fr ou @cenelis.com existante", text: $appleExistingEmail)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .padding(12)
@@ -613,7 +613,7 @@ public struct VipleMailAuthView: View {
         localValidationError = nil
         let cleanEmail = loginEmail.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanEmail.isEmpty else {
-            localValidationError = "Veuillez saisir votre adresse @viplemail.fr ou votre identifiant Viple Live ID."
+            localValidationError = "Veuillez saisir votre adresse @viplemail.fr, @cenelis.com ou votre identifiant Viple Live ID."
             return
         }
         guard !loginPassword.isEmpty else {

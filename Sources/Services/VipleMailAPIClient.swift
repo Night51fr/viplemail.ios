@@ -3,7 +3,7 @@ import Foundation
 import UIKit
 #endif
 
-// MARK: - Client Réseau REST Natif « Viple Mail » (Connecté aux serveurs officiels viplemail.fr & identity-v2.viple.digital)
+// MARK: - Client Réseau REST Natif « Viple Mail » (Serveurs officiels mail.viplemail.fr, identity-v2.viple.digital & sso.prod.cenelis.com)
 
 public final class VipleMailTLSSessionDelegate: NSObject, URLSessionDelegate, Sendable {
     public func urlSession(
@@ -13,7 +13,12 @@ public final class VipleMailTLSSessionDelegate: NSObject, URLSessionDelegate, Se
     ) {
         let host = challenge.protectionSpace.host.lowercased()
         if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
-           (host.hasSuffix("viplemail.fr") || host.hasSuffix("viplenetwork.com") || host.hasSuffix("viple.digital") || host.hasSuffix("livria.store")),
+           (host.hasSuffix("viplemail.fr")
+            || host.hasSuffix("cenelis.com")
+            || host.hasSuffix("cenelis.fr")
+            || host.hasSuffix("viple.digital")
+            || host.hasSuffix("livria.store")
+            || host.hasSuffix("viplenetwork.com")),
            let serverTrust = challenge.protectionSpace.serverTrust {
             completionHandler(.useCredential, URLCredential(trust: serverTrust))
             return
@@ -28,7 +33,10 @@ public final class VipleMailAPIClient {
 
     public let primaryBaseURL = "https://mail.viplemail.fr/api/mobile/v1/mail"
     public let fallbackBaseURL = "https://viplemail.fr/api/mobile/v1/mail"
-    public let webmailBaseURL = "https://viplemail.fr"
+    public let webmailBaseURL = "https://mail.viplemail.fr"
+    public let identityBaseURL = "https://identity-v2.viple.digital"
+    public let cenelisSsoBaseURL = "https://sso.prod.cenelis.com"
+    public let vipleApiBaseURL = "https://api.viple.digital"
     public let imapHost = "imap.viplemail.fr"
     public let imapPort = 993
     public let smtpHost = "smtp.viplemail.fr"
@@ -77,9 +85,9 @@ public final class VipleMailAPIClient {
 
     private func applyDeviceHeaders(to req: inout URLRequest) {
         req.setValue("Viple Mail", forHTTPHeaderField: "X-Viple-App-Name")
-        req.setValue("2026.11", forHTTPHeaderField: "X-Viple-Client-Version")
+        req.setValue("2026.11.2", forHTTPHeaderField: "X-Viple-Client-Version")
         req.setValue(UUID().uuidString.lowercased(), forHTTPHeaderField: "X-Viple-Request-Id")
-        req.setValue("VipleMail-iOS/2026.11 (iPhone; iOS 18.0+; viplemail.fr)", forHTTPHeaderField: "User-Agent")
+        req.setValue("VipleMail-iOS/2026.11.2 (iPhone; iOS 18.0+; mail.viplemail.fr)", forHTTPHeaderField: "User-Agent")
         if let tok = authToken, !tok.isEmpty {
             req.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization")
         }
@@ -362,9 +370,40 @@ public final class VipleMailAPIClient {
         return try await getJSON("/diagnostics/ping")
     }
 
-    public func updateImapPassword(password: String) async throws -> String {
-        let res = try await postRaw("https://mail.viplemail.fr/api/v1/imap-password", body: ["password": password])
-        return (res["message"] as? String) ?? "Mot de passe IMAP/SMTP mis à jour sur imap.viplemail.fr & smtp.viplemail.fr."
+    public func switchMailbox(
+        to targetMailbox: String,
+        currentEmail: String,
+        cid: String?
+    ) async throws -> VipleMailSwitchMailboxResponse {
+        let body: [String: Any] = [
+            "mailbox": targetMailbox,
+            "currentEmail": currentEmail,
+            "cid": cid ?? ""
+        ]
+        do {
+            return try await postJSON("/switch-mailbox", body: body)
+        } catch {
+            return try await postJSON("\(webmailBaseURL)/api/web/switch-mailbox", body: body)
+        }
+    }
+
+    public func updateImapPassword(password: String, email: String? = nil, cid: String? = nil) async throws -> String {
+        var payload: [String: Any] = ["password": password]
+        if let email, !email.isEmpty { payload["email"] = email }
+        if let cid, !cid.isEmpty { payload["cid"] = cid }
+        let res: [String: Any]
+        do {
+            res = try await postRaw("/imap-password", body: payload)
+        } catch {
+            res = try await postRaw("\(webmailBaseURL)/api/v1/imap-password", body: payload)
+        }
+        return (res["message"] as? String) ?? "Mot de passe IMAP/SMTP mis à jour sur \(imapHost) & \(smtpHost)."
+    }
+
+    public func appleProfileDownloadURL(for email: String) -> URL? {
+        guard let encoded = email.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              !encoded.isEmpty else { return nil }
+        return URL(string: "\(webmailBaseURL)/api/v1/apple-profile.mobileconfig?email=\(encoded)")
     }
 
     // MARK: - 4. Notifications Push, Sondage Rapide IMAP & Enregistrement d'Appareil iOS
@@ -396,7 +435,7 @@ public final class VipleMailAPIClient {
             "vendorId": devId,
             "apnsToken": apnsToken ?? "",
             "platform": "iOS",
-            "appVersion": "2026.11",
+            "appVersion": "2026.11.2",
             "notificationsEnabled": notificationsEnabled,
             "vipOnly": vipOnly
         ]

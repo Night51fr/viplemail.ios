@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-// MARK: - Modèles de Données « Viple Mail » (100 % synchronisés avec SQL Server VipleLive & VipleID — Zéro donnée de démo)
+// MARK: - Modèles de Données « Viple Mail » (100 % synchronisés avec Stalwart Mail Server mail.viplemail.fr, SSO Viple Live ID & Cenelis Connect — Zéro donnée de démo)
 
 public struct VipleMailBootstrapResponse: Codable, Sendable {
     public let ok: Bool
@@ -14,6 +14,7 @@ public struct VipleMailBootstrapResponse: Codable, Sendable {
     public let messages: [VipleMailMessage]?
     public let contacts: [VipleMailContact]?
     public let settings: VipleMailSettings?
+    public let availableMailboxes: [String]?
 }
 
 public struct VipleMailAuthResponse: Codable, Sendable {
@@ -29,6 +30,19 @@ public struct VipleMailAuthResponse: Codable, Sendable {
     public let requiresApplePasswordSetup: Bool?
     public let icloudEmail: String?
     public let vipleMailAddress: String?
+    public let cenelisMailAddress: String?
+    public let availableMailboxes: [String]?
+    public let user: VipleMailUser?
+}
+
+public struct VipleMailSwitchMailboxResponse: Codable, Sendable {
+    public let ok: Bool
+    public let error: String?
+    public let mailbox: String?
+    public let vipleMailAddress: String?
+    public let cenelisMailAddress: String?
+    public let availableMailboxes: [String]?
+    public let token: String?
     public let user: VipleMailUser?
 }
 
@@ -36,6 +50,8 @@ public struct VipleMailUser: Codable, Identifiable, Equatable, Sendable {
     public let id: String
     public let email: String
     public let vipleMailAddress: String?
+    public let cenelisMailAddress: String?
+    public let accountType: String?
     public var displayName: String
     public let firstName: String?
     public let lastName: String?
@@ -48,7 +64,7 @@ public struct VipleMailUser: Codable, Identifiable, Equatable, Sendable {
     public let location: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, email, vipleMailAddress, displayName, firstName, lastName, cid, puid, avatarUrl, colorScheme, personalMessage, bio, location
+        case id, email, vipleMailAddress, cenelisMailAddress, accountType, displayName, firstName, lastName, cid, puid, avatarUrl, colorScheme, personalMessage, bio, location
     }
 
     public init(from decoder: Decoder) throws {
@@ -62,6 +78,8 @@ public struct VipleMailUser: Codable, Identifiable, Equatable, Sendable {
         }
         self.email = (try? c.decode(String.self, forKey: .email)) ?? ""
         self.vipleMailAddress = try? c.decode(String.self, forKey: .vipleMailAddress)
+        self.cenelisMailAddress = try? c.decode(String.self, forKey: .cenelisMailAddress)
+        self.accountType = try? c.decode(String.self, forKey: .accountType)
         self.displayName = (try? c.decode(String.self, forKey: .displayName)) ?? self.email
         self.firstName = try? c.decode(String.self, forKey: .firstName)
         self.lastName = try? c.decode(String.self, forKey: .lastName)
@@ -76,6 +94,7 @@ public struct VipleMailUser: Codable, Identifiable, Equatable, Sendable {
 
     public var primaryAddress: String {
         if let vm = vipleMailAddress, !vm.isEmpty { return vm }
+        if let cm = cenelisMailAddress, !cm.isEmpty { return cm }
         return email
     }
 
@@ -379,11 +398,13 @@ public struct VipleMailDiagnosticsPing: Codable, Sendable {
     public let ok: Bool
     public let service: String
     public let domain: String
+    public let domains: [String]?
     public let host: String
     public let imapHost: String?
     public let smtpHost: String?
     public let autodiscoverHost: String?
     public let ssoProvider: String
+    public let cenelisSsoProvider: String?
     public let serverTimeUtc: String
     public let version: String
 }

@@ -49,6 +49,7 @@ private struct VipleMailHTMLWebView: UIViewRepresentable {
         }
     }
 
+    @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate {
         var parent: VipleMailHTMLWebView
         var lastLoadedHTML: String = ""
@@ -58,22 +59,31 @@ private struct VipleMailHTMLWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            webView.evaluateJavaScript("document.documentElement.scrollHeight") { result, _ in
-                if let h = result as? CGFloat, h > 0 {
-                    DispatchQueue.main.async {
+            Task { @MainActor [weak self, weak webView] in
+                guard let self, let webView else { return }
+                if let result = try? await webView.evaluateJavaScript("document.documentElement.scrollHeight") {
+                    if let num = result as? NSNumber {
+                        let h = CGFloat(truncating: num)
+                        if h > 0 {
+                            self.parent.dynamicHeight = max(80, h + 12)
+                        }
+                    } else if let h = result as? CGFloat, h > 0 {
                         self.parent.dynamicHeight = max(80, h + 12)
                     }
                 }
             }
         }
 
-        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            if navigationAction.navigationType == .linkActivated, let url = navigationAction.request.url {
-                UIApplication.shared.open(url)
-                decisionHandler(.cancel)
-                return
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction
+        ) async -> WKNavigationActionPolicy {
+            if navigationAction.navigationType == .linkActivated,
+               let url = navigationAction.request.url {
+                await UIApplication.shared.open(url)
+                return .cancel
             }
-            decisionHandler(.allow)
+            return .allow
         }
     }
 }

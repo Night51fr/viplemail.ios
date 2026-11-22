@@ -175,41 +175,43 @@ public struct VipleMailMainView: View {
             Spacer()
 
             if let user = vm.currentUser {
-                Button {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
-                        vm.selectedTab = 3
-                    }
-                } label: {
-                    HStack(spacing: 8) {
-                        VStack(alignment: .trailing, spacing: 1) {
-                            Text(user.displayName)
-                                .font(.system(size: 12.5, weight: .bold, design: .rounded))
-                                .foregroundStyle(VipleMailPalette.ink)
-                                .lineLimit(1)
-                            Text(user.primaryAddress)
-                                .font(.system(size: 10.5, weight: .semibold))
-                                .foregroundStyle(VipleMailPalette.primary)
-                                .lineLimit(1)
+                if vm.availableMailboxes.count > 1 {
+                    Menu {
+                        Section("Boîtes rattachées à votre compte") {
+                            ForEach(vm.availableMailboxes, id: \.self) { mbx in
+                                Button {
+                                    Task {
+                                        await vm.switchActiveMailbox(to: mbx)
+                                    }
+                                } label: {
+                                    Label(
+                                        mbx,
+                                        systemImage: mbx.lowercased() == vm.currentEmail.lowercased()
+                                            ? "checkmark.circle.fill"
+                                            : "envelope.fill"
+                                    )
+                                }
+                            }
                         }
-                        VipleMailAvatarView(
-                            name: user.displayName,
-                            email: user.primaryAddress,
-                            avatarUrl: user.avatarUrl,
-                            size: 34,
-                            isVip: true
-                        )
+                        Divider()
+                        Button {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+                                vm.selectedTab = 3
+                            }
+                        } label: {
+                            Label("Réglages & Compte", systemImage: "slider.horizontal.3")
+                        }
+                    } label: {
+                        headerAccountPill(user: user, showDropdownChevron: true)
                     }
-                    .padding(.leading, 10)
-                    .padding(.trailing, 5)
-                    .padding(.vertical, 5)
-                    .background(
-                        Capsule()
-                            .fill(VipleMailPalette.surfaceSubtle)
-                    )
-                    .overlay(
-                        Capsule()
-                            .stroke(VipleMailPalette.border, lineWidth: 1)
-                    )
+                } else {
+                    Button {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+                            vm.selectedTab = 3
+                        }
+                    } label: {
+                        headerAccountPill(user: user, showDropdownChevron: false)
+                    }
                 }
             }
         }
@@ -218,6 +220,46 @@ public struct VipleMailMainView: View {
         .background(
             VipleMailPalette.surface
                 .shadow(color: VipleMailPalette.cobaltDeep.opacity(0.05), radius: 8, x: 0, y: 3)
+        )
+    }
+
+    private func headerAccountPill(user: VipleMailUser, showDropdownChevron: Bool) -> some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .trailing, spacing: 1) {
+                Text(user.displayName)
+                    .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                    .foregroundStyle(VipleMailPalette.ink)
+                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(vm.currentEmail)
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(VipleMailPalette.primary)
+                        .lineLimit(1)
+                    if showDropdownChevron {
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(VipleMailPalette.primary)
+                    }
+                }
+            }
+            VipleMailAvatarView(
+                name: user.displayName,
+                email: vm.currentEmail,
+                avatarUrl: user.avatarUrl,
+                size: 34,
+                isVip: true
+            )
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 5)
+        .padding(.vertical, 5)
+        .background(
+            Capsule()
+                .fill(VipleMailPalette.surfaceSubtle)
+        )
+        .overlay(
+            Capsule()
+                .stroke(VipleMailPalette.border, lineWidth: 1)
         )
     }
 
