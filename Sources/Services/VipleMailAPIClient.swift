@@ -85,9 +85,9 @@ public final class VipleMailAPIClient {
 
     private func applyDeviceHeaders(to req: inout URLRequest) {
         req.setValue("Viple Mail", forHTTPHeaderField: "X-Viple-App-Name")
-        req.setValue("2026.11.2", forHTTPHeaderField: "X-Viple-Client-Version")
+        req.setValue("2026.11.3", forHTTPHeaderField: "X-Viple-Client-Version")
         req.setValue(UUID().uuidString.lowercased(), forHTTPHeaderField: "X-Viple-Request-Id")
-        req.setValue("VipleMail-iOS/2026.11.2 (iPhone; iOS 18.0+; mail.viplemail.fr)", forHTTPHeaderField: "User-Agent")
+        req.setValue("VipleMail-iOS/2026.11.3 (iPhone; iOS 18.0+; mail.viplemail.fr)", forHTTPHeaderField: "User-Agent")
         if let tok = authToken, !tok.isEmpty {
             req.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization")
         }
@@ -404,6 +404,76 @@ public final class VipleMailAPIClient {
         guard let encoded = email.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               !encoded.isEmpty else { return nil }
         return URL(string: "\(webmailBaseURL)/api/v1/apple-profile.mobileconfig?email=\(encoded)")
+    }
+
+    // MARK: - 3b. Discussions Instantanées « Chat @viplemail.fr »
+
+    public func fetchChatSessions(email: String, cid: String?) async throws -> VipleChatSessionsResponse {
+        var items: [URLQueryItem] = [URLQueryItem(name: "email", value: email)]
+        if let cid, !cid.isEmpty {
+            items.append(URLQueryItem(name: "cid", value: cid))
+        }
+        return try await getJSON("/chat/sessions", queryItems: items)
+    }
+
+    public func fetchChatMessages(
+        sessionId: String?,
+        peerEmail: String?,
+        email: String,
+        cid: String?
+    ) async throws -> VipleChatMessagesResponse {
+        var items: [URLQueryItem] = [URLQueryItem(name: "email", value: email)]
+        if let cid, !cid.isEmpty {
+            items.append(URLQueryItem(name: "cid", value: cid))
+        }
+        if let sessionId, !sessionId.isEmpty {
+            items.append(URLQueryItem(name: "sessionId", value: sessionId))
+        }
+        if let peerEmail, !peerEmail.isEmpty {
+            items.append(URLQueryItem(name: "peerEmail", value: peerEmail))
+        }
+        return try await getJSON("/chat/messages", queryItems: items)
+    }
+
+    public func sendChatMessage(
+        senderEmail: String,
+        senderCid: String?,
+        recipientEmail: String,
+        bodyText: String,
+        attachments: [VipleMailAttachment]
+    ) async throws -> VipleChatSendResponse {
+        let encodedAtts: [[String: Any]] = attachments.map { att in
+            [
+                "id": att.id,
+                "fileName": att.fileName,
+                "mimeType": att.mimeType,
+                "sizeBytes": att.sizeBytes,
+                "url": att.url
+            ]
+        }
+        return try await postJSON("/chat/send", body: [
+            "senderEmail": senderEmail,
+            "senderCid": senderCid ?? "",
+            "recipientEmail": recipientEmail,
+            "bodyText": bodyText,
+            "attachments": encodedAtts
+        ])
+    }
+
+    public func markChatSessionRead(sessionId: String, email: String, cid: String?) async {
+        _ = try? await postRaw("/chat/read", body: [
+            "sessionId": sessionId,
+            "email": email,
+            "cid": cid ?? ""
+        ])
+    }
+
+    public func deleteChatSession(sessionId: String, email: String, cid: String?) async throws {
+        _ = try await postRaw("/chat/delete", body: [
+            "sessionId": sessionId,
+            "email": email,
+            "cid": cid ?? ""
+        ])
     }
 
     // MARK: - 4. Notifications Push, Sondage Rapide IMAP & Enregistrement d'Appareil iOS

@@ -177,15 +177,40 @@ public struct MailContactsView: View {
                         .background(Circle().fill(VipleMailPalette.surfaceSubtle))
                 }
 
+                if contact.contactEmail.lowercased().hasSuffix("@viplemail.fr") {
+                    Button {
+                        Task {
+                            await vm.startOrOpenChat(with: contact.contactEmail)
+                        }
+                    } label: {
+                        Image(systemName: "bubble.left.and.bubble.right.fill")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 36, height: 36)
+                            .background(Circle().fill(VipleMailPalette.primary))
+                    }
+                    .accessibilityLabel("Démarrer un Chat")
+                }
+
                 Button {
-                    vm.presentComposer(.newMail(to: contact.contactEmail))
+                    vm.presentComposer(.newMail(
+                        to: contact.contactEmail,
+                        forceMail: contact.contactEmail.lowercased().hasSuffix("@viplemail.fr")
+                    ))
                 } label: {
                     Image(systemName: "envelope.fill")
                         .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(contact.contactEmail.lowercased().hasSuffix("@viplemail.fr") ? VipleMailPalette.primary : .white)
                         .frame(width: 36, height: 36)
-                        .background(Circle().fill(VipleMailPalette.primary))
+                        .background(
+                            Circle().fill(
+                                contact.contactEmail.lowercased().hasSuffix("@viplemail.fr")
+                                    ? VipleMailPalette.primary.opacity(0.12)
+                                    : VipleMailPalette.primary
+                            )
+                        )
                 }
+                .accessibilityLabel("Envoyer un e-mail")
 
                 Menu {
                     Button {

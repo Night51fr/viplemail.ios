@@ -6,7 +6,7 @@ import SwiftUI
 @MainActor
 public final class VipleMailViewModel: ObservableObject {
     // Navigation & Onglets
-    @Published public var selectedTab: Int = 0 // 0: Boîte, 1: Dossiers, 2: Contacts VIP, 3: Réglages
+    @Published public var selectedTab: Int = 0 // 0: Boîte, 1: Chat, 2: Dossiers, 3: Contacts VIP, 4: Réglages
     @Published public var activeFolderId: String = "Inbox" {
         didSet {
             guard oldValue != activeFolderId, isAuthenticated else { return }
@@ -58,13 +58,20 @@ public final class VipleMailViewModel: ObservableObject {
     @Published public var folders: [VipleMailFolderSummary] = []
     @Published public var messages: [VipleMailMessage] = []
     @Published public var contacts: [VipleMailContact] = []
+    @Published public var chatSessions: [VipleChatSession] = []
+    @Published public var chatUnreadCount: Int = 0
     @Published public var settings: VipleMailSettings = VipleMailSettings()
     @Published public var lastDiagnosticsPing: VipleMailDiagnosticsPing? = nil
 
-    // Conversation ouverte
+    // Courrier ouvert & Discussion Chat ouverte
     @Published public var activeThreadMessages: [VipleMailMessage] = []
     @Published public var isReadingMessage: Bool = false
     @Published public var openedMessage: VipleMailMessage? = nil
+
+    @Published public var openedChatSession: VipleChatSession? = nil
+    @Published public var activeChatMessages: [VipleChatMessage] = []
+    @Published public var isChatConversationOpen: Bool = false
+    @Published public var isSendingChatMessage: Bool = false
 
     public func openMessage(_ msg: VipleMailMessage) {
         withAnimation(.spring(response: 0.36, dampingFraction: 0.88)) {
@@ -77,6 +84,21 @@ public final class VipleMailViewModel: ObservableObject {
         withAnimation(.spring(response: 0.36, dampingFraction: 0.88)) {
             self.openedMessage = nil
             self.isReadingMessage = false
+        }
+    }
+
+    public func openChatSession(_ session: VipleChatSession) {
+        withAnimation(.spring(response: 0.36, dampingFraction: 0.88)) {
+            self.openedChatSession = session
+            self.isChatConversationOpen = true
+        }
+    }
+
+    public func closeChatSession() {
+        withAnimation(.spring(response: 0.36, dampingFraction: 0.88)) {
+            self.openedChatSession = nil
+            self.activeChatMessages = []
+            self.isChatConversationOpen = false
         }
     }
 
@@ -97,6 +119,10 @@ public final class VipleMailViewModel: ObservableObject {
         if let c = contacts.first(where: { $0.contactEmail.lowercased() == clean }),
            !c.avatarUrl.isEmpty {
             return c.avatarUrl
+        }
+        if let cs = chatSessions.first(where: { $0.peerEmail.lowercased() == clean }),
+           let csAv = cs.peerAvatarUrl, !csAv.isEmpty {
+            return csAv
         }
         if let m = messages.first(where: { $0.senderEmail.lowercased() == clean && !($0.senderAvatarUrl ?? "").isEmpty }) {
             return m.senderAvatarUrl
@@ -299,6 +325,14 @@ public final class VipleMailViewModel: ObservableObject {
                 self.folders = res.folders ?? []
                 self.messages = res.messages ?? []
                 self.contacts = res.contacts ?? []
+                if let srvChats = res.chatSessions {
+                    self.chatSessions = srvChats
+                }
+                if let srvChatUnread = res.chatUnreadCount {
+                    self.chatUnreadCount = srvChatUnread
+                } else {
+                    self.chatUnreadCount = self.chatSessions.reduce(0) { $0 + $1.unreadCount }
+                }
                 if let srvMailboxes = res.availableMailboxes, !srvMailboxes.isEmpty {
                     self.availableMailboxes = deduplicatedMailboxes(srvMailboxes.map { Optional($0) } + [resolvedMailbox, user.vipleMailAddress, user.cenelisMailAddress])
                 } else {
@@ -314,7 +348,7 @@ public final class VipleMailViewModel: ObservableObject {
                 saveLocalCrossAppSession(user: user, activeEmail: resolvedMailbox)
                 await VipleMailNotificationManager.shared.ingestBootstrapSnapshot(
                     mailboxEmail: resolvedMailbox,
-                    unreadCount: self.unreadInboxCount,
+                    unreadCount: self.unreadInboxCount + self.chatUnreadCount,
                     messages: self.messages,
                     settings: self.settings
                 )
@@ -373,6 +407,9 @@ public final class VipleMailViewModel: ObservableObject {
             defaults.set(switchedAddress, forKey: savedEmailKey)
             self.openedMessage = nil
             self.isReadingMessage = false
+            self.openedChatSession = nil
+            self.activeChatMessages = []
+            self.isChatConversationOpen = false
             self.selectedMessageIds.removeAll()
             self.isSelectionMode = false
 
@@ -615,6 +652,13 @@ public final class VipleMailViewModel: ObservableObject {
         folders = []
         messages = []
         contacts = []
+        chatSessions = []
+        chatUnreadCount = 0
+        openedMessage = nil
+        isReadingMessage = false
+        openedChatSession = nil
+        activeChatMessages = []
+        isChatConversationOpen = false
         selectedMessageIds.removeAll()
         isSelectionMode = false
         selectedTab = 0
@@ -938,7 +982,8 @@ public final class VipleMailViewModel: ObservableObject {
         replyToMessageId: String?,
         draftId: String?,
         isDraft: Bool,
-        attachments: [VipleMailAttachment]
+        attachments: [VipleMailAttachment],
+        deliveryMode: String = "mail"
     ) async -> Bool {
         guard !currentEmail.isEmpty else { return false }
         isSendingMail = true
@@ -963,6 +1008,7 @@ public final class VipleMailViewModel: ObservableObject {
             "subject": subject,
             "bodyText": bodyText,
             "priority": priority,
+            "deliveryMode": deliveryMode,
             "isDraft": isDraft,
             "attachments": encodedAttachments
         ]
@@ -980,6 +1026,179 @@ public final class VipleMailViewModel: ObservableObject {
         } catch {
             showToast(error.localizedDescription)
             return false
+        }
+    }
+
+    // MARK: - 4b. Sessions de Discussion Instantanée « Chat @viplemail.fr »
+
+    public func refreshChatSessions() async {
+        guard !currentEmail.isEmpty else { return }
+        do {
+            let res = try await VipleMailAPIClient.shared.fetchChatSessions(email: currentEmail, cid: currentCid)
+            if res.ok {
+                self.chatSessions = res.sessions ?? []
+                self.chatUnreadCount = res.chatUnreadCount ?? self.chatSessions.reduce(0) { $0 + $1.unreadCount }
+                await VipleMailNotificationManager.shared.applyAppBadgeCount(
+                    settings.pushNotificationsEnabled ? (unreadInboxCount + chatUnreadCount) : 0
+                )
+            }
+        } catch { }
+    }
+
+    public func startOrOpenChat(with peerEmail: String) async {
+        let cleanPeer = peerEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !cleanPeer.isEmpty, !currentEmail.isEmpty else { return }
+
+        if let existing = chatSessions.first(where: { $0.peerEmail.lowercased() == cleanPeer }) {
+            self.selectedTab = 1
+            openChatSession(existing)
+            await reloadActiveChatMessages(silent: false)
+            return
+        }
+
+        do {
+            let res = try await VipleMailAPIClient.shared.fetchChatMessages(
+                sessionId: nil,
+                peerEmail: cleanPeer,
+                email: currentEmail,
+                cid: currentCid
+            )
+            if res.ok, let session = res.session {
+                if !chatSessions.contains(where: { $0.id == session.id }) {
+                    chatSessions.insert(session, at: 0)
+                }
+                self.activeChatMessages = res.messages ?? []
+                self.selectedTab = 1
+                openChatSession(session)
+            }
+        } catch {
+            showToast(error.localizedDescription)
+        }
+    }
+
+    public func openChatSessionFromNotification(sessionId: String, peerEmail: String?) async {
+        self.closeMessage()
+        self.selectedTab = 1
+        if let existing = chatSessions.first(where: { $0.id == sessionId }) {
+            openChatSession(existing)
+            await reloadActiveChatMessages(silent: false)
+            return
+        }
+        guard !currentEmail.isEmpty else { return }
+        do {
+            let res = try await VipleMailAPIClient.shared.fetchChatMessages(
+                sessionId: sessionId,
+                peerEmail: peerEmail,
+                email: currentEmail,
+                cid: currentCid
+            )
+            if res.ok, let session = res.session {
+                if !chatSessions.contains(where: { $0.id == session.id }) {
+                    chatSessions.insert(session, at: 0)
+                }
+                self.activeChatMessages = res.messages ?? []
+                openChatSession(session)
+                await refreshChatSessions()
+            }
+        } catch { }
+    }
+
+    public func reloadActiveChatMessages(silent: Bool = false) async {
+        guard let active = openedChatSession, !currentEmail.isEmpty else { return }
+        do {
+            let res = try await VipleMailAPIClient.shared.fetchChatMessages(
+                sessionId: active.id,
+                peerEmail: active.peerEmail,
+                email: currentEmail,
+                cid: currentCid
+            )
+            if res.ok {
+                if let updatedSession = res.session {
+                    self.openedChatSession = updatedSession
+                    if let idx = chatSessions.firstIndex(where: { $0.id == updatedSession.id }) {
+                        chatSessions[idx] = updatedSession
+                    } else {
+                        chatSessions.insert(updatedSession, at: 0)
+                    }
+                }
+                if let msgs = res.messages, msgs != self.activeChatMessages {
+                    self.activeChatMessages = msgs
+                }
+                self.chatUnreadCount = self.chatSessions.reduce(0) { $0 + $1.unreadCount }
+                await VipleMailNotificationManager.shared.applyAppBadgeCount(
+                    settings.pushNotificationsEnabled ? (unreadInboxCount + chatUnreadCount) : 0
+                )
+            }
+        } catch {
+            if !silent {
+                showToast(error.localizedDescription)
+            }
+        }
+    }
+
+    @discardableResult
+    public func sendChatMessage(
+        to recipientEmail: String,
+        text: String,
+        attachments: [VipleMailAttachment] = []
+    ) async -> VipleChatSession? {
+        let cleanRecipient = recipientEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !currentEmail.isEmpty, !cleanRecipient.isEmpty, (!cleanText.isEmpty || !attachments.isEmpty) else {
+            return nil
+        }
+
+        isSendingChatMessage = true
+        defer { isSendingChatMessage = false }
+
+        do {
+            let res = try await VipleMailAPIClient.shared.sendChatMessage(
+                senderEmail: currentEmail,
+                senderCid: currentCid,
+                recipientEmail: cleanRecipient,
+                bodyText: cleanText,
+                attachments: attachments
+            )
+            guard res.ok, let session = res.session, let newMsg = res.message else {
+                showToast(res.error ?? "Impossible d'envoyer le message de chat.")
+                return nil
+            }
+
+            if let idx = chatSessions.firstIndex(where: { $0.id == session.id }) {
+                chatSessions.remove(at: idx)
+            }
+            chatSessions.insert(session, at: 0)
+
+            if openedChatSession?.id == session.id {
+                self.openedChatSession = session
+                if !activeChatMessages.contains(where: { $0.id == newMsg.id }) {
+                    activeChatMessages.append(newMsg)
+                }
+            }
+            return session
+        } catch {
+            showToast(error.localizedDescription)
+            return nil
+        }
+    }
+
+    public func deleteChatSession(_ session: VipleChatSession) async {
+        guard !currentEmail.isEmpty else { return }
+        chatSessions.removeAll { $0.id == session.id }
+        if openedChatSession?.id == session.id {
+            closeChatSession()
+        }
+        chatUnreadCount = chatSessions.reduce(0) { $0 + $1.unreadCount }
+        do {
+            try await VipleMailAPIClient.shared.deleteChatSession(
+                sessionId: session.id,
+                email: currentEmail,
+                cid: currentCid
+            )
+            showToast("Discussion supprimée.")
+        } catch {
+            showToast(error.localizedDescription)
+            await refreshChatSessions()
         }
     }
 

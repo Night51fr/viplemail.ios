@@ -15,6 +15,8 @@ public struct VipleMailBootstrapResponse: Codable, Sendable {
     public let contacts: [VipleMailContact]?
     public let settings: VipleMailSettings?
     public let availableMailboxes: [String]?
+    public let chatSessions: [VipleChatSession]?
+    public let chatUnreadCount: Int?
 }
 
 public struct VipleMailAuthResponse: Codable, Sendable {
@@ -182,6 +184,11 @@ public struct VipleMailMessage: Codable, Identifiable, Equatable, Hashable, Send
     public let attachments: [VipleMailAttachment]
     public let senderAvatarUrl: String?
     public let recipientAvatarUrl: String?
+    public let deliveryMode: String?
+
+    public var isChatDelivery: Bool {
+        (deliveryMode ?? "mail").lowercased() == "chat"
+    }
 
     public var hasAttachments: Bool {
         !attachments.isEmpty
@@ -423,6 +430,38 @@ public struct VipleMailNotificationItem: Codable, Identifiable, Equatable, Senda
     public let priority: String
     public let hasAttachments: Bool
     public let receivedAt: String
+    public let isChatMessage: Bool?
+    public let chatSessionId: String?
+
+    public init(
+        id: String,
+        threadId: String,
+        senderName: String,
+        senderEmail: String,
+        senderAvatarUrl: String?,
+        subject: String,
+        snippet: String,
+        isVipSender: Bool,
+        priority: String,
+        hasAttachments: Bool,
+        receivedAt: String,
+        isChatMessage: Bool? = false,
+        chatSessionId: String? = nil
+    ) {
+        self.id = id
+        self.threadId = threadId
+        self.senderName = senderName
+        self.senderEmail = senderEmail
+        self.senderAvatarUrl = senderAvatarUrl
+        self.subject = subject
+        self.snippet = snippet
+        self.isVipSender = isVipSender
+        self.priority = priority
+        self.hasAttachments = hasAttachments
+        self.receivedAt = receivedAt
+        self.isChatMessage = isChatMessage
+        self.chatSessionId = chatSessionId
+    }
 }
 
 public struct VipleMailNotificationPollResponse: Codable, Sendable {
@@ -433,12 +472,145 @@ public struct VipleMailNotificationPollResponse: Codable, Sendable {
     public let pushNotificationsEnabled: Bool
     public let vipNotificationsOnly: Bool
     public let recentUnseen: [VipleMailNotificationItem]
+    public let chatUnreadCount: Int?
 }
 
-// MARK: - État du Compositeur de Courrier
+// MARK: - Modèles de Discussion Instantanée « Chat @viplemail.fr »
+
+public struct VipleChatSession: Codable, Identifiable, Equatable, Hashable, Sendable {
+    public let id: String
+    public let peerEmail: String
+    public let peerDisplayName: String
+    public let peerAvatarUrl: String?
+    public var lastMessageSnippet: String
+    public var lastSenderEmail: String
+    public var updatedAt: String
+    public var unreadCount: Int
+    public let isVipPeer: Bool
+
+    public var formattedRelativeDate: String {
+        let iso = ISO8601DateFormatter()
+        let isoFrac = ISO8601DateFormatter()
+        isoFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = iso.date(from: updatedAt) ?? isoFrac.date(from: updatedAt) {
+            let cal = Calendar.current
+            if cal.isDateInToday(date) {
+                let tf = DateFormatter()
+                tf.locale = Locale(identifier: "fr_FR")
+                tf.dateFormat = "HH:mm"
+                return tf.string(from: date)
+            } else if cal.isDateInYesterday(date) {
+                return "Hier"
+            } else {
+                let df = DateFormatter()
+                df.locale = Locale(identifier: "fr_FR")
+                df.dateFormat = "d MMM"
+                return df.string(from: date)
+            }
+        }
+        return String(updatedAt.prefix(10))
+    }
+}
+
+public struct VipleChatMessage: Codable, Identifiable, Equatable, Hashable, Sendable {
+    public let id: String
+    public let sessionId: String
+    public let senderEmail: String
+    public let senderName: String
+    public let senderAvatarUrl: String?
+    public let recipientEmail: String
+    public let bodyText: String
+    public let bodyHtml: String
+    public let attachments: [VipleMailAttachment]
+    public var isRead: Bool
+    public let createdAt: String
+
+    public init(
+        id: String,
+        sessionId: String,
+        senderEmail: String,
+        senderName: String,
+        senderAvatarUrl: String?,
+        recipientEmail: String,
+        bodyText: String,
+        bodyHtml: String,
+        attachments: [VipleMailAttachment],
+        isRead: Bool,
+        createdAt: String
+    ) {
+        self.id = id
+        self.sessionId = sessionId
+        self.senderEmail = senderEmail
+        self.senderName = senderName
+        self.senderAvatarUrl = senderAvatarUrl
+        self.recipientEmail = recipientEmail
+        self.bodyText = bodyText
+        self.bodyHtml = bodyHtml
+        self.attachments = attachments
+        self.isRead = isRead
+        self.createdAt = createdAt
+    }
+
+    public var formattedTime: String {
+        let iso = ISO8601DateFormatter()
+        let isoFrac = ISO8601DateFormatter()
+        isoFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = iso.date(from: createdAt) ?? isoFrac.date(from: createdAt) {
+            let tf = DateFormatter()
+            tf.locale = Locale(identifier: "fr_FR")
+            tf.dateFormat = "HH:mm"
+            return tf.string(from: date)
+        }
+        return String(createdAt.suffix(8).prefix(5))
+    }
+
+    public var formattedDayKey: String {
+        let iso = ISO8601DateFormatter()
+        let isoFrac = ISO8601DateFormatter()
+        isoFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = iso.date(from: createdAt) ?? isoFrac.date(from: createdAt) {
+            let cal = Calendar.current
+            if cal.isDateInToday(date) { return "Aujourd'hui" }
+            if cal.isDateInYesterday(date) { return "Hier" }
+            let df = DateFormatter()
+            df.locale = Locale(identifier: "fr_FR")
+            df.dateFormat = "EEEE d MMMM"
+            return df.string(from: date).capitalized
+        }
+        return String(createdAt.prefix(10))
+    }
+}
+
+public struct VipleChatSessionsResponse: Codable, Sendable {
+    public let ok: Bool
+    public let chatUnreadCount: Int?
+    public let sessions: [VipleChatSession]?
+}
+
+public struct VipleChatMessagesResponse: Codable, Sendable {
+    public let ok: Bool
+    public let session: VipleChatSession?
+    public let messages: [VipleChatMessage]?
+}
+
+public struct VipleChatSendResponse: Codable, Sendable {
+    public let ok: Bool
+    public let error: String?
+    public let session: VipleChatSession?
+    public let message: VipleChatMessage?
+}
+
+// MARK: - État du Compositeur de Courrier / Chat
+
+public enum ComposeDeliveryChannel: String, CaseIterable, Identifiable, Sendable {
+    case chat = "Chat"
+    case mail = "Mail"
+
+    public var id: String { rawValue }
+}
 
 public enum MailComposeMode: Equatable, Sendable {
-    case newMail(to: String = "", subject: String = "")
+    case newMail(to: String = "", subject: String = "", forceMail: Bool = false)
     case reply(VipleMailMessage)
     case replyAll(VipleMailMessage)
     case forward(VipleMailMessage)

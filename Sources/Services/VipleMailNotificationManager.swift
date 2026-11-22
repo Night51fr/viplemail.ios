@@ -379,7 +379,8 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
             await refreshAuthorizationStatus()
 
             let effectivePushEnabled = poll.pushNotificationsEnabled
-            await applyAppBadgeCount(effectivePushEnabled && badgeEnabled ? poll.inboxUnreadCount : 0)
+            let totalUnread = poll.inboxUnreadCount + (poll.chatUnreadCount ?? 0)
+            await applyAppBadgeCount(effectivePushEnabled && badgeEnabled ? totalUnread : 0)
 
             let baselineKey = baselineDoneStorageKey(for: cleanEmail)
             var seen = loadSeenMessageIds(for: cleanEmail)
@@ -408,6 +409,10 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
                         if attachedViewModel?.openedMessage?.id == item.id {
                             continue
                         }
+                        if let chatSid = item.chatSessionId, !chatSid.isEmpty,
+                           attachedViewModel?.openedChatSession?.id == chatSid {
+                            continue
+                        }
                         toNotify.append(item)
                     }
                 }
@@ -416,9 +421,12 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
             saveSeenMessageIds(seen, for: cleanEmail)
 
             if let vm = attachedViewModel,
-               (hasNewChanges || vm.unreadInboxCount != poll.inboxUnreadCount),
+               (hasNewChanges || vm.unreadInboxCount != poll.inboxUnreadCount || vm.chatUnreadCount != (poll.chatUnreadCount ?? 0)),
                !isBackground {
                 await vm.refreshBootstrap()
+                if vm.openedChatSession != nil {
+                    await vm.reloadActiveChatMessages(silent: true)
+                }
             }
 
             for item in toNotify.prefix(5) {
@@ -455,7 +463,9 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
             "senderName": item.senderName,
             "senderEmail": item.senderEmail,
             "subject": item.subject,
-            "mailboxEmail": mailboxEmail
+            "mailboxEmail": mailboxEmail,
+            "isChatMessage": item.isChatMessage == true,
+            "chatSessionId": item.chatSessionId ?? ""
         ]
 
         if let avatarAttachment = await buildAvatarAttachment(
@@ -586,10 +596,16 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
         let messageId = notification.request.content.userInfo["messageId"] as? String
+        let chatSessionId = notification.request.content.userInfo["chatSessionId"] as? String
         return await MainActor.run {
             if let messageId,
                !messageId.hasPrefix("test-"),
                self.attachedViewModel?.openedMessage?.id == messageId {
+                return []
+            }
+            if let chatSessionId,
+               !chatSessionId.isEmpty,
+               self.attachedViewModel?.openedChatSession?.id == chatSessionId {
                 return []
             }
             var opts: UNNotificationPresentationOptions = [.banner, .list]
@@ -614,6 +630,8 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
         let subject = (userInfo["subject"] as? String) ?? ""
         let threadId = (userInfo["threadId"] as? String) ?? ""
         let mailboxEmail = (userInfo["mailboxEmail"] as? String) ?? ""
+        let isChatMessage = (userInfo["isChatMessage"] as? Bool) ?? false
+        let chatSessionId = (userInfo["chatSessionId"] as? String) ?? ""
         let replyText = (response as? UNTextInputNotificationResponse)?.userText
 
         await handleNotificationInteraction(
@@ -623,6 +641,8 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
             subject: subject,
             threadId: threadId,
             mailboxEmail: mailboxEmail,
+            isChatMessage: isChatMessage,
+            chatSessionId: chatSessionId,
             replyText: replyText
         )
     }
@@ -634,6 +654,8 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
         subject: String,
         threadId: String,
         mailboxEmail: String,
+        isChatMessage: Bool = false,
+        chatSessionId: String = "",
         replyText: String?
     ) async {
         guard !messageId.isEmpty, !messageId.hasPrefix("test-") else { return }
@@ -642,6 +664,50 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
             ? mailboxEmail
             : (attachedViewModel?.currentEmail ?? defaults.string(forKey: savedEmailKey) ?? "")
         let targetCid = attachedViewModel?.currentCid ?? defaults.string(forKey: savedCidKey)
+
+        if isChatMessage || !chatSessionId.isEmpty {
+            let sid = !chatSessionId.isEmpty ? chatSessionId : threadId
+            switch actionIdentifier {
+            case Self.actionMarkRead:
+                if !targetEmail.isEmpty, !sid.isEmpty {
+                    await VipleMailAPIClient.shared.markChatSessionRead(sessionId: sid, email: targetEmail, cid: targetCid)
+                    await attachedViewModel?.refreshChatSessions()
+                }
+            case Self.actionReply:
+                let cleanReply = (replyText ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                if !cleanReply.isEmpty, !senderEmail.isEmpty, !targetEmail.isEmpty {
+                    _ = try? await VipleMailAPIClient.shared.sendChatMessage(
+                        senderEmail: targetEmail,
+                        senderCid: targetCid,
+                        recipientEmail: senderEmail,
+                        bodyText: cleanReply,
+                        attachments: []
+                    )
+                    if !sid.isEmpty {
+                        await VipleMailAPIClient.shared.markChatSessionRead(sessionId: sid, email: targetEmail, cid: targetCid)
+                    }
+                    if let vm = attachedViewModel {
+                        vm.showToast("Réponse envoyée dans le Chat à \(senderEmail)")
+                        await vm.refreshChatSessions()
+                        if vm.openedChatSession?.id == sid {
+                            await vm.reloadActiveChatMessages(silent: true)
+                        }
+                    }
+                } else if let vm = attachedViewModel, !sid.isEmpty {
+                    await vm.openChatSessionFromNotification(sessionId: sid, peerEmail: senderEmail)
+                }
+            case Self.actionTrash:
+                if !targetEmail.isEmpty, !sid.isEmpty {
+                    try? await VipleMailAPIClient.shared.deleteChatSession(sessionId: sid, email: targetEmail, cid: targetCid)
+                    await attachedViewModel?.refreshChatSessions()
+                }
+            default:
+                if let vm = attachedViewModel, !sid.isEmpty {
+                    await vm.openChatSessionFromNotification(sessionId: sid, peerEmail: senderEmail)
+                }
+            }
+            return
+        }
 
         switch actionIdentifier {
         case Self.actionMarkRead:

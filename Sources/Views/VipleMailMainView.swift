@@ -93,22 +93,28 @@ public struct VipleMailMainView: View {
 
     // MARK: - Interface Principale Authentifiée
 
+    private var isDetailOverlayActive: Bool {
+        vm.isReadingMessage || vm.openedMessage != nil || vm.isChatConversationOpen || vm.openedChatSession != nil
+    }
+
     private var authenticatedShell: some View {
         VStack(spacing: 0) {
             ZStack(alignment: .bottomTrailing) {
                 // Couche 1 : Barre supérieure « Viple Mail » + Contenu de l'onglet actif (0 décalage garanti)
                 VStack(spacing: 0) {
                     topBrandHeaderBar
-                        .offset(y: vm.isReadingMessage ? -72 : 0)
-                        .opacity(vm.isReadingMessage ? 0 : 1)
+                        .offset(y: isDetailOverlayActive ? -72 : 0)
+                        .opacity(isDetailOverlayActive ? 0 : 1)
 
                     Group {
                         switch vm.selectedTab {
                         case 0:
                             InboxListView()
                         case 1:
-                            MailFoldersView()
+                            MailChatView()
                         case 2:
+                            MailFoldersView()
+                        case 3:
                             MailContactsView()
                         default:
                             MailSettingsView()
@@ -118,14 +124,14 @@ public struct VipleMailMainView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                // Couche 2 : Lecture du mail plein espace avec sa propre NavigationStack (boutons natifs SwiftUI Liquid Glass)
+                // Couche 2 : Lecture d'un courrier classique plein espace
                 if vm.selectedTab == 0, let openedMsg = vm.openedMessage {
                     NavigationStack {
                         MessageDetailView(message: openedMsg)
                     }
                     .id(openedMsg.id)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(VipleMailPalette.background)
+                    .background(VipleMailPalette.surface)
                     .transition(.asymmetric(
                         insertion: .move(edge: .trailing),
                         removal: .move(edge: .trailing)
@@ -133,8 +139,23 @@ public struct VipleMailMainView: View {
                     .zIndex(10)
                 }
 
-                // Bouton Flottant « Nouveau courrier » (masqué en mode sélection multiple et pendant la lecture d'un mail)
-                if !vm.isSelectionMode && !vm.isReadingMessage && vm.openedMessage == nil {
+                // Couche 3 : Session de discussion Chat @viplemail.fr plein espace
+                if vm.selectedTab == 1, let openedChat = vm.openedChatSession {
+                    NavigationStack {
+                        MailChatConversationView(session: openedChat)
+                    }
+                    .id(openedChat.id)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(VipleMailPalette.background)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .trailing),
+                        removal: .move(edge: .trailing)
+                    ))
+                    .zIndex(11)
+                }
+
+                // Bouton Flottant « Nouveau » (masqué dans l'onglet Chat, en sélection multiple et pendant la lecture)
+                if vm.selectedTab != 1 && !vm.isSelectionMode && !isDetailOverlayActive {
                     Button {
                         vm.presentComposer(.newMail())
                     } label: {
@@ -196,7 +217,7 @@ public struct VipleMailMainView: View {
                         Divider()
                         Button {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
-                                vm.selectedTab = 3
+                                vm.selectedTab = 4
                             }
                         } label: {
                             Label("Réglages & Compte", systemImage: "slider.horizontal.3")
@@ -207,7 +228,7 @@ public struct VipleMailMainView: View {
                 } else {
                     Button {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
-                            vm.selectedTab = 3
+                            vm.selectedTab = 4
                         }
                     } label: {
                         headerAccountPill(user: user, showDropdownChevron: false)
@@ -266,7 +287,7 @@ public struct VipleMailMainView: View {
     // MARK: - Barre de Navigation Inférieure Optimisée iOS
 
     private var bottomNavigationBar: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             tabBarItem(
                 index: 0,
                 title: "Boîte",
@@ -275,24 +296,30 @@ public struct VipleMailMainView: View {
             )
             tabBarItem(
                 index: 1,
+                title: "Chat",
+                icon: "bubble.left.and.bubble.right.fill",
+                badge: vm.chatUnreadCount
+            )
+            tabBarItem(
+                index: 2,
                 title: "Dossiers",
                 icon: "folder.fill",
                 badge: 0
             )
             tabBarItem(
-                index: 2,
-                title: "Contacts VIP",
+                index: 3,
+                title: "Contacts",
                 icon: "person.2.crop.square.stack.fill",
                 badge: vm.contacts.filter { $0.isFavorite }.count
             )
             tabBarItem(
-                index: 3,
+                index: 4,
                 title: "Réglages",
                 icon: "slider.horizontal.3",
                 badge: 0
             )
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 10)
         .padding(.top, 8)
         .padding(.bottom, 6)
         .background(
@@ -307,15 +334,16 @@ public struct VipleMailMainView: View {
         return Button {
             withAnimation(.spring(response: 0.34, dampingFraction: 0.84)) {
                 vm.closeMessage()
+                vm.closeChatSession()
                 vm.selectedTab = index
             }
         } label: {
             VStack(spacing: 4) {
                 ZStack(alignment: .topTrailing) {
                     Image(systemName: icon)
-                        .font(.system(size: 19, weight: isSelected ? .bold : .medium))
+                        .font(.system(size: 18, weight: isSelected ? .bold : .medium))
                         .foregroundStyle(isSelected ? VipleMailPalette.primary : VipleMailPalette.inkMuted)
-                        .frame(width: 44, height: 26)
+                        .frame(width: 42, height: 26)
                         .background(
                             Capsule()
                                 .fill(isSelected ? VipleMailPalette.primary.opacity(0.14) : Color.clear)
@@ -329,7 +357,7 @@ public struct VipleMailMainView: View {
                             .padding(.vertical, 1.5)
                             .background(
                                 Capsule()
-                                    .fill(index == 2 ? VipleMailPalette.vipGold : VipleMailPalette.primary)
+                                    .fill(index == 3 ? VipleMailPalette.vipGold : VipleMailPalette.primary)
                             )
                             .offset(x: 8, y: -4)
                     }

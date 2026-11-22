@@ -2,7 +2,7 @@ import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
 
-// MARK: - Compositeur de Courrier Plein Écran « Viple Mail » (Style Apple Mail iOS : Lignes À / Cc / Cci / De /Priorité / Objet, Auto-complétion avec Avatars, Carnet de Contacts, Pièces Jointes, Barre d'Outils & Brouillons)
+// MARK: - Compositeur Unifié « Viple Mail » (Bascule Automatique Chat / Mail pour @viplemail.fr + Mode Mail Classique Apple Mail)
 
 public struct ComposeMailView: View {
     @Environment(\.dismiss) private var dismiss
@@ -22,6 +22,10 @@ public struct ComposeMailView: View {
     @State private var draftId: String? = nil
     @State private var threadId: String? = nil
     @State private var replyToMessageId: String? = nil
+
+    // Mode Chat / Mail intelligent pour les destinataires @viplemail.fr
+    @State private var deliveryChannel: ComposeDeliveryChannel = .mail
+    @State private var hasManualChannelChoice: Bool = false
 
     @State private var selectedPhotoItem: PhotosPickerItem? = nil
     @State private var isShowingFileImporter: Bool = false
@@ -44,10 +48,63 @@ public struct ComposeMailView: View {
         self.mode = mode
     }
 
-    private var modeDefaultTitle: String {
+    /// Les réponses, transferts et brouillons d'un mail restent toujours en mode Mail classique (comme un e-mail externe)
+    private var isLockedClassicMailFlow: Bool {
         switch mode {
         case .newMail:
-            return "Nouveau message"
+            return false
+        case .reply, .replyAll, .forward, .editDraft:
+            return true
+        }
+    }
+
+    /// Extrait l'adresse @viplemail.fr unique saisie dans « À : » lorsqu'aucune copie Cc/Cci n'est renseignée
+    private var detectedVipleMailRecipient: String? {
+        guard !isLockedClassicMailFlow,
+              ccField.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              bccField.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+
+        let parts = toField
+            .split(whereSeparator: { $0 == "," || $0 == ";" })
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        guard parts.count == 1 else { return nil }
+        var candidate = parts[0]
+        if let openIdx = candidate.firstIndex(of: "<"),
+           let closeIdx = candidate.firstIndex(of: ">"),
+           openIdx < closeIdx {
+            candidate = String(candidate[candidate.index(after: openIdx)..<closeIdx])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        let lower = candidate.lowercased()
+        guard lower.hasSuffix("@viplemail.fr"),
+              let atIdx = lower.firstIndex(of: "@"),
+              lower.distance(from: lower.startIndex, to: atIdx) >= 1,
+              !lower.contains(" ") else {
+            return nil
+        }
+        return lower
+    }
+
+    private var isShowingChatMailToggle: Bool {
+        detectedVipleMailRecipient != nil
+    }
+
+    private var isEffectiveChatMode: Bool {
+        isShowingChatMailToggle && deliveryChannel == .chat
+    }
+
+    private var modeDefaultTitle: String {
+        if isEffectiveChatMode {
+            return "Nouveau Chat"
+        }
+        switch mode {
+        case .newMail:
+            return "Nouveau courrier"
         case .reply:
             return "Répondre"
         case .replyAll:
@@ -60,12 +117,27 @@ public struct ComposeMailView: View {
     }
 
     private var headerTitle: String {
+        if isEffectiveChatMode {
+            if let peer = detectedVipleMailRecipient {
+                return "Chat • \(peer)"
+            }
+            return "Nouveau Chat"
+        }
         let trimmed = subjectField.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? modeDefaultTitle : trimmed
     }
 
+    private var isBusySending: Bool {
+        vm.isSendingMail || vm.isSendingChatMessage
+    }
+
     private var canSend: Bool {
-        !toField.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !vm.isSendingMail
+        guard !isBusySending else { return false }
+        if isEffectiveChatMode {
+            return detectedVipleMailRecipient != nil &&
+                (!bodyField.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
+        }
+        return !toField.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var hasUnsavedChanges: Bool {
@@ -100,10 +172,10 @@ public struct ComposeMailView: View {
             VStack(spacing: 0) {
                 ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 0) {
-                        // 1. Lignes d'en-tête style Apple Mail (À, Cc/Cci/De, Objet)
+                        // 1. Lignes d'en-tête avec bouton dynamique « Chat | Mail » dès qu'une adresse @viplemail.fr est saisie
                         appleMailRecipientHeaders
 
-                        // 2. Suggestions d'auto-complétion de contacts avec photo synchronisée
+                        // 2. Suggestions d'auto-complétion de contacts
                         if !matchingContacts.isEmpty {
                             contactSuggestionsList
                         }
@@ -113,18 +185,17 @@ public struct ComposeMailView: View {
                             attachmentsSection
                         }
 
-                        // 4. Corps du message plein écran style Apple Mail
+                        // 4. Corps du message (Chat instantané ou Mail classique)
                         appleMailBodyEditor
 
-                        // 5. Aperçu de la signature automatique Viple Mail
-                        if vm.settings.signatureEnabled && !vm.settings.signatureHtml.isEmpty {
+                        // 5. Aperçu de la signature uniquement en mode Mail classique
+                        if !isEffectiveChatMode && vm.settings.signatureEnabled && !vm.settings.signatureHtml.isEmpty {
                             signatureBlock
                         }
                     }
                 }
                 .background(VipleMailPalette.surface)
 
-                // Barre d'outils inférieure complète style Apple Mail (Formatage, Pièces jointes, Photos, Modèles, Priorité)
                 appleMailBottomToolbar
             }
             .background(VipleMailPalette.surface.ignoresSafeArea())
@@ -133,7 +204,7 @@ public struct ComposeMailView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Annuler") {
-                        if hasUnsavedChanges {
+                        if hasUnsavedChanges && !isEffectiveChatMode {
                             isShowingCancelDialog = true
                         } else {
                             dismiss()
@@ -143,23 +214,23 @@ public struct ComposeMailView: View {
 
                 ToolbarItem(placement: .confirmationAction) {
                     Button {
-                        sendMailNow()
+                        submitNow()
                     } label: {
-                        if vm.isSendingMail {
+                        if isBusySending {
                             ProgressView()
                         } else {
-                            Image(systemName: "arrow.up.circle.fill")
+                            Image(systemName: isEffectiveChatMode ? "paperplane.circle.fill" : "arrow.up.circle.fill")
                                 .font(.system(size: 28, weight: .bold))
                                 .symbolRenderingMode(.hierarchical)
                                 .foregroundStyle(canSend ? VipleMailPalette.primary : VipleMailPalette.inkMuted.opacity(0.45))
                         }
                     }
                     .disabled(!canSend)
-                    .accessibilityLabel("Envoyer le courrier")
+                    .accessibilityLabel(isEffectiveChatMode ? "Envoyer dans le Chat" : "Envoyer le courrier")
                 }
             }
             .confirmationDialog(
-                "Que souhaitez-vous faire de ce message ?",
+                "Que souhaitez-vous faire de ce courrier ?",
                 isPresented: $isShowingCancelDialog,
                 titleVisibility: .visible
             ) {
@@ -177,15 +248,28 @@ public struct ComposeMailView: View {
             .onAppear {
                 populateInitialFields()
                 includeSignature = vm.settings.signatureEnabled
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                syncChannelWithRecipient()
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 250_000_000)
                     if toField.isEmpty {
                         focusedField = .to
+                    } else if isEffectiveChatMode {
+                        focusedField = .body
                     } else if subjectField.isEmpty {
                         focusedField = .subject
                     } else {
                         focusedField = .body
                     }
                 }
+            }
+            .onChange(of: toField) { _, _ in
+                syncChannelWithRecipient()
+            }
+            .onChange(of: ccField) { _, _ in
+                syncChannelWithRecipient()
+            }
+            .onChange(of: bccField) { _, _ in
+                syncChannelWithRecipient()
             }
             .onChange(of: selectedPhotoItem) { _, newItem in
                 guard let newItem else { return }
@@ -203,23 +287,45 @@ public struct ComposeMailView: View {
         }
     }
 
-    // MARK: - En-têtes Style Apple Mail (À :, Cc/Cci, De :, Priorité :, Objet :)
+    private func syncChannelWithRecipient() {
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
+            if isLockedClassicMailFlow {
+                deliveryChannel = .mail
+                return
+            }
+            if detectedVipleMailRecipient != nil {
+                if !hasManualChannelChoice {
+                    deliveryChannel = .chat
+                }
+            } else {
+                deliveryChannel = .mail
+                hasManualChannelChoice = false
+            }
+        }
+    }
+
+    // MARK: - En-têtes (À : + Bascule « Chat | Mail » à côté de l'adresse @viplemail.fr)
 
     private var appleMailRecipientHeaders: some View {
         VStack(spacing: 0) {
-            // Ligne « À : »
-            HStack(spacing: 10) {
+            // Ligne « À : » avec sélecteur « Chat / Mail » juste à côté dès que l'adresse se termine par @viplemail.fr
+            HStack(spacing: 8) {
                 Text("À :")
                     .font(.system(size: 15, weight: .regular))
                     .foregroundStyle(VipleMailPalette.inkSecondary)
-                    .frame(width: 44, alignment: .leading)
+                    .frame(width: 34, alignment: .leading)
 
-                TextField("destinataire@viplemail.fr", text: $toField)
-                    .font(.system(size: 15.5))
+                TextField("destinataire@domaine.fr", text: $toField)
+                    .font(.system(size: 15))
                     .textInputAutocapitalization(.never)
                     .keyboardType(.emailAddress)
                     .autocorrectionDisabled()
                     .focused($focusedField, equals: .to)
+
+                if isShowingChatMailToggle {
+                    chatMailInlineToggle
+                        .transition(.scale.combined(with: .opacity))
+                }
 
                 Button {
                     contactPickerTarget = .to
@@ -232,250 +338,328 @@ public struct ComposeMailView: View {
                 .accessibilityLabel("Ajouter un contact")
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 13)
+            .padding(.vertical, 12)
 
             Divider()
                 .padding(.leading, 16)
 
-            // Ligne « Cc/Cci, De : » pliée ou dépliée (comportement natif Apple Mail)
-            if !isExpandedCcBccFrom && ccField.isEmpty && bccField.isEmpty {
-                Button {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.84)) {
-                        isExpandedCcBccFrom = true
-                    }
-                } label: {
-                    HStack(spacing: 8) {
-                        Text("Cc/Cci, De :")
-                            .font(.system(size: 15, weight: .regular))
-                            .foregroundStyle(VipleMailPalette.inkSecondary)
-
-                        Text(vm.currentEmail)
-                            .font(.system(size: 15, weight: .regular))
-                            .foregroundStyle(VipleMailPalette.inkSecondary)
-                            .lineLimit(1)
-
-                        Spacer()
-
-                        if priority != "Normal" {
-                            priorityPillBadge
-                        }
-
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(VipleMailPalette.inkMuted)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 13)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-
-                Divider()
-                    .padding(.leading, 16)
-            } else {
-                // Ligne « Cc : »
+            if isEffectiveChatMode {
+                // Bandeau d'information Chat instantané @viplemail.fr
                 HStack(spacing: 10) {
-                    Text("Cc :")
-                        .font(.system(size: 15, weight: .regular))
-                        .foregroundStyle(VipleMailPalette.inkSecondary)
-                        .frame(width: 44, alignment: .leading)
+                    Image(systemName: "bubble.left.and.bubble.right.fill")
+                        .font(.system(size: 13.5, weight: .bold))
+                        .foregroundStyle(VipleMailPalette.primary)
 
-                    TextField("Copie carbone", text: $ccField)
-                        .font(.system(size: 15.5))
-                        .textInputAutocapitalization(.never)
-                        .keyboardType(.emailAddress)
-                        .autocorrectionDisabled()
-                        .focused($focusedField, equals: .cc)
-
-                    Button {
-                        contactPickerTarget = .cc
-                        isShowingContactPicker = true
-                    } label: {
-                        Image(systemName: "plus.circle")
-                            .font(.system(size: 20, weight: .regular))
-                            .foregroundStyle(VipleMailPalette.primary)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 13)
-
-                Divider()
-                    .padding(.leading, 16)
-
-                // Ligne « Cci : »
-                HStack(spacing: 10) {
-                    Text("Cci :")
-                        .font(.system(size: 15, weight: .regular))
-                        .foregroundStyle(VipleMailPalette.inkSecondary)
-                        .frame(width: 44, alignment: .leading)
-
-                    TextField("Copie carbone invisible", text: $bccField)
-                        .font(.system(size: 15.5))
-                        .textInputAutocapitalization(.never)
-                        .keyboardType(.emailAddress)
-                        .autocorrectionDisabled()
-                        .focused($focusedField, equals: .bcc)
-
-                    Button {
-                        contactPickerTarget = .bcc
-                        isShowingContactPicker = true
-                    } label: {
-                        Image(systemName: "plus.circle")
-                            .font(.system(size: 20, weight: .regular))
-                            .foregroundStyle(VipleMailPalette.primary)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 13)
-
-                Divider()
-                    .padding(.leading, 16)
-
-                // Ligne « De : » avec photo de profil synchronisée et sélection de boîte (@viplemail.fr / @cenelis.com)
-                HStack(spacing: 10) {
-                    Text("De :")
-                        .font(.system(size: 15, weight: .regular))
-                        .foregroundStyle(VipleMailPalette.inkSecondary)
-                        .frame(width: 44, alignment: .leading)
-
-                    if let user = vm.currentUser {
-                        VipleMailAvatarView(
-                            name: user.displayName,
-                            email: vm.currentEmail,
-                            avatarUrl: vm.resolveAvatarUrl(for: vm.currentEmail, explicitUrl: user.avatarUrl),
-                            size: 24,
-                            isVip: true
-                        )
-                        if vm.availableMailboxes.count > 1 {
-                            Menu {
-                                ForEach(vm.availableMailboxes, id: \.self) { mbx in
-                                    Button {
-                                        Task {
-                                            await vm.switchActiveMailbox(to: mbx)
-                                        }
-                                    } label: {
-                                        Label(
-                                            "\(user.displayName) <\(mbx)>",
-                                            systemImage: mbx.lowercased() == vm.currentEmail.lowercased()
-                                                ? "checkmark.circle.fill"
-                                                : "envelope"
-                                        )
-                                    }
-                                }
-                            } label: {
-                                HStack(spacing: 5) {
-                                    Text("\(user.displayName) <\(vm.currentEmail)>")
-                                        .font(.system(size: 14.5, weight: .medium))
-                                        .foregroundStyle(VipleMailPalette.primary)
-                                        .lineLimit(1)
-                                    Image(systemName: "chevron.up.chevron.down")
-                                        .font(.system(size: 11, weight: .bold))
-                                        .foregroundStyle(VipleMailPalette.primary)
-                                }
-                            }
-                        } else {
-                            Text("\(user.displayName) <\(vm.currentEmail)>")
-                                .font(.system(size: 14.5, weight: .medium))
-                                .foregroundStyle(VipleMailPalette.ink)
-                                .lineLimit(1)
-                        }
-                    } else {
-                        Text(vm.currentEmail)
-                            .font(.system(size: 15))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Session de Chat @viplemail.fr par défaut")
+                            .font(.system(size: 12.5, weight: .bold, design: .rounded))
                             .foregroundStyle(VipleMailPalette.ink)
+                        Text("Sera retrouvée dans l'onglet Chat. Touchez « Mail » ci-dessus pour envoyer un courrier classique.")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(VipleMailPalette.inkSecondary)
                     }
 
-                    Spacer()
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-
-                Divider()
-                    .padding(.leading, 16)
-
-                // Ligne « Priorité : » (style Apple Mail)
-                HStack(spacing: 10) {
-                    Text("Priorité :")
-                        .font(.system(size: 15, weight: .regular))
-                        .foregroundStyle(VipleMailPalette.inkSecondary)
-
-                    Spacer()
-
-                    Picker("Priorité", selection: $priority) {
-                        Text("Basse ↓").tag("Low")
-                        Text("Normale").tag("Normal")
-                        Text("Haute ❗").tag("High")
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(maxWidth: 240)
+                    Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
+                .background(VipleMailPalette.primary.opacity(0.08))
 
                 Divider()
-                    .padding(.leading, 16)
-            }
+            } else {
+                // Mode Mail Classique : Cc/Cci, De :, Priorité :, Objet :
+                if !isExpandedCcBccFrom && ccField.isEmpty && bccField.isEmpty {
+                    Button {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.84)) {
+                            isExpandedCcBccFrom = true
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text("Cc/Cci, De :")
+                                .font(.system(size: 15, weight: .regular))
+                                .foregroundStyle(VipleMailPalette.inkSecondary)
 
-            // Ligne « Objet : »
-            HStack(spacing: 10) {
-                Text("Objet :")
-                    .font(.system(size: 15, weight: .regular))
-                    .foregroundStyle(VipleMailPalette.inkSecondary)
-                    .frame(width: 54, alignment: .leading)
+                            Text(vm.currentEmail)
+                                .font(.system(size: 15, weight: .regular))
+                                .foregroundStyle(VipleMailPalette.inkSecondary)
+                                .lineLimit(1)
 
-                TextField("Objet du message", text: $subjectField)
-                    .font(.system(size: 15.5, weight: .semibold))
-                    .focused($focusedField, equals: .subject)
+                            Spacer()
 
-                if priority != "Normal" && !isExpandedCcBccFrom {
-                    priorityPillBadge
+                            if priority != "Normal" {
+                                priorityPillBadge
+                            }
+
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(VipleMailPalette.inkMuted)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 13)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+
+                    Divider()
+                        .padding(.leading, 16)
+                } else {
+                    HStack(spacing: 10) {
+                        Text("Cc :")
+                            .font(.system(size: 15, weight: .regular))
+                            .foregroundStyle(VipleMailPalette.inkSecondary)
+                            .frame(width: 44, alignment: .leading)
+
+                        TextField("Copie carbone", text: $ccField)
+                            .font(.system(size: 15.5))
+                            .textInputAutocapitalization(.never)
+                            .keyboardType(.emailAddress)
+                            .autocorrectionDisabled()
+                            .focused($focusedField, equals: .cc)
+
+                        Button {
+                            contactPickerTarget = .cc
+                            isShowingContactPicker = true
+                        } label: {
+                            Image(systemName: "plus.circle")
+                                .font(.system(size: 20, weight: .regular))
+                                .foregroundStyle(VipleMailPalette.primary)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 13)
+
+                    Divider()
+                        .padding(.leading, 16)
+
+                    HStack(spacing: 10) {
+                        Text("Cci :")
+                            .font(.system(size: 15, weight: .regular))
+                            .foregroundStyle(VipleMailPalette.inkSecondary)
+                            .frame(width: 44, alignment: .leading)
+
+                        TextField("Copie carbone invisible", text: $bccField)
+                            .font(.system(size: 15.5))
+                            .textInputAutocapitalization(.never)
+                            .keyboardType(.emailAddress)
+                            .autocorrectionDisabled()
+                            .focused($focusedField, equals: .bcc)
+
+                        Button {
+                            contactPickerTarget = .bcc
+                            isShowingContactPicker = true
+                        } label: {
+                            Image(systemName: "plus.circle")
+                                .font(.system(size: 20, weight: .regular))
+                                .foregroundStyle(VipleMailPalette.primary)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 13)
+
+                    Divider()
+                        .padding(.leading, 16)
+
+                    HStack(spacing: 10) {
+                        Text("De :")
+                            .font(.system(size: 15, weight: .regular))
+                            .foregroundStyle(VipleMailPalette.inkSecondary)
+                            .frame(width: 44, alignment: .leading)
+
+                        if let user = vm.currentUser {
+                            VipleMailAvatarView(
+                                name: user.displayName,
+                                email: vm.currentEmail,
+                                avatarUrl: vm.resolveAvatarUrl(for: vm.currentEmail, explicitUrl: user.avatarUrl),
+                                size: 24,
+                                isVip: true
+                            )
+                            if vm.availableMailboxes.count > 1 {
+                                Menu {
+                                    ForEach(vm.availableMailboxes, id: \.self) { mbx in
+                                        Button {
+                                            Task {
+                                                await vm.switchActiveMailbox(to: mbx)
+                                            }
+                                        } label: {
+                                            Label(
+                                                "\(user.displayName) <\(mbx)>",
+                                                systemImage: mbx.lowercased() == vm.currentEmail.lowercased()
+                                                    ? "checkmark.circle.fill"
+                                                    : "envelope"
+                                            )
+                                        }
+                                    }
+                                } label: {
+                                    HStack(spacing: 5) {
+                                        Text("\(user.displayName) <\(vm.currentEmail)>")
+                                            .font(.system(size: 14.5, weight: .medium))
+                                            .foregroundStyle(VipleMailPalette.primary)
+                                            .lineLimit(1)
+                                        Image(systemName: "chevron.up.chevron.down")
+                                            .font(.system(size: 11, weight: .bold))
+                                            .foregroundStyle(VipleMailPalette.primary)
+                                    }
+                                }
+                            } else {
+                                Text("\(user.displayName) <\(vm.currentEmail)>")
+                                    .font(.system(size: 14.5, weight: .medium))
+                                    .foregroundStyle(VipleMailPalette.ink)
+                                    .lineLimit(1)
+                            }
+                        } else {
+                            Text(vm.currentEmail)
+                                .font(.system(size: 15))
+                                .foregroundStyle(VipleMailPalette.ink)
+                        }
+
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+
+                    Divider()
+                        .padding(.leading, 16)
+
+                    HStack(spacing: 10) {
+                        Text("Priorité :")
+                            .font(.system(size: 15, weight: .regular))
+                            .foregroundStyle(VipleMailPalette.inkSecondary)
+
+                        Spacer()
+
+                        Picker("Priorité", selection: $priority) {
+                            Text("Basse ↓").tag("Low")
+                            Text("Normale").tag("Normal")
+                            Text("Haute ❗").tag("High")
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(maxWidth: 240)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+
+                    Divider()
+                        .padding(.leading, 16)
                 }
 
-                Menu {
-                    Button {
-                        applyTemplate(
-                            subject: "Invitation réunion",
-                            body: "Bonjour,\n\nJe vous propose d'organiser un point rapide cette semaine.\nQuelles sont vos disponibilités ?\n\nBien cordialement,"
-                        )
-                    } label: {
-                        Label("Réunion / Rendez-vous", systemImage: "calendar")
-                    }
-                    Button {
-                        applyTemplate(
-                            subject: "Transmission de document",
-                            body: "Bonjour,\n\nVeuillez trouver ci-joint le document demandé.\nN'hésitez pas à revenir vers moi pour toute question.\n\nCordialement,"
-                        )
-                    } label: {
-                        Label("Envoi de document", systemImage: "doc.text")
-                    }
-                    Button {
-                        applyTemplate(
-                            subject: "Merci pour notre échange",
-                            body: "Bonjour,\n\nJe tenais à vous remercier pour la qualité de notre échange d'aujourd'hui.\n\nÀ très bientôt,"
-                        )
-                    } label: {
-                        Label("Remerciement", systemImage: "hand.thumbsup")
-                    }
-                    Button {
-                        applyTemplate(
-                            subject: "Suivi de votre demande",
-                            body: "Bonjour,\n\nJe me permets de revenir vers vous concernant notre précédent échange afin de savoir si vous avez pu avancer sur ce sujet.\n\nBien à vous,"
-                        )
-                    } label: {
-                        Label("Relance courtoise", systemImage: "arrow.clockwise")
-                    }
-                } label: {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(VipleMailPalette.primary)
-                }
-                .accessibilityLabel("Modèles rapides")
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 13)
+                // Ligne « Objet : »
+                HStack(spacing: 10) {
+                    Text("Objet :")
+                        .font(.system(size: 15, weight: .regular))
+                        .foregroundStyle(VipleMailPalette.inkSecondary)
+                        .frame(width: 54, alignment: .leading)
 
-            Divider()
+                    TextField("Objet du courrier", text: $subjectField)
+                        .font(.system(size: 15.5, weight: .semibold))
+                        .focused($focusedField, equals: .subject)
+
+                    if priority != "Normal" && !isExpandedCcBccFrom {
+                        priorityPillBadge
+                    }
+
+                    Menu {
+                        Button {
+                            applyTemplate(
+                                subject: "Invitation réunion",
+                                body: "Bonjour,\n\nJe vous propose d'organiser un point rapide cette semaine.\nQuelles sont vos disponibilités ?\n\nBien cordialement,"
+                            )
+                        } label: {
+                            Label("Réunion / Rendez-vous", systemImage: "calendar")
+                        }
+                        Button {
+                            applyTemplate(
+                                subject: "Transmission de document",
+                                body: "Bonjour,\n\nVeuillez trouver ci-joint le document demandé.\nN'hésitez pas à revenir vers moi pour toute question.\n\nCordialement,"
+                            )
+                        } label: {
+                            Label("Envoi de document", systemImage: "doc.text")
+                        }
+                        Button {
+                            applyTemplate(
+                                subject: "Merci pour notre échange",
+                                body: "Bonjour,\n\nJe tenais à vous remercier pour la qualité de notre échange d'aujourd'hui.\n\nÀ très bientôt,"
+                            )
+                        } label: {
+                            Label("Remerciement", systemImage: "hand.thumbsup")
+                        }
+                        Button {
+                            applyTemplate(
+                                subject: "Suivi de votre demande",
+                                body: "Bonjour,\n\nJe me permets de revenir vers vous concernant notre précédent échange afin de savoir si vous avez pu avancer sur ce sujet.\n\nBien à vous,"
+                            )
+                        } label: {
+                            Label("Relance courtoise", systemImage: "arrow.clockwise")
+                        }
+                    } label: {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(VipleMailPalette.primary)
+                    }
+                    .accessibilityLabel("Modèles rapides")
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 13)
+
+                Divider()
+            }
         }
+    }
+
+    private var chatMailInlineToggle: some View {
+        HStack(spacing: 2) {
+            Button {
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) {
+                    hasManualChannelChoice = true
+                    deliveryChannel = .chat
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "bubble.left.fill")
+                        .font(.system(size: 10.5, weight: .bold))
+                    Text("Chat")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                }
+                .foregroundStyle(deliveryChannel == .chat ? Color.white : VipleMailPalette.inkSecondary)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background(
+                    Capsule()
+                        .fill(deliveryChannel == .chat ? VipleMailPalette.primary : Color.clear)
+                )
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) {
+                    hasManualChannelChoice = true
+                    deliveryChannel = .mail
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "envelope.fill")
+                        .font(.system(size: 10.5, weight: .bold))
+                    Text("Mail")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                }
+                .foregroundStyle(deliveryChannel == .mail ? Color.white : VipleMailPalette.inkSecondary)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background(
+                    Capsule()
+                        .fill(deliveryChannel == .mail ? VipleMailPalette.primary : Color.clear)
+                )
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(2.5)
+        .background(
+            Capsule()
+                .fill(VipleMailPalette.surfaceSubtle)
+        )
+        .overlay(
+            Capsule()
+                .stroke(VipleMailPalette.border, lineWidth: 1)
+        )
     }
 
     private var priorityPillBadge: some View {
@@ -494,7 +678,7 @@ public struct ComposeMailView: View {
         )
     }
 
-    // MARK: - Auto-complétion des Contacts avec Photo Synchronisée
+    // MARK: - Auto-complétion des Contacts
 
     private var contactSuggestionsList: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -516,10 +700,13 @@ public struct ComposeMailView: View {
                                 Text(contact.displayName)
                                     .font(.system(size: 14.5, weight: .bold))
                                     .foregroundStyle(VipleMailPalette.ink)
-                                if contact.isFavorite {
-                                    Image(systemName: "crown.fill")
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(VipleMailPalette.vipGold)
+                                if contact.contactEmail.lowercased().hasSuffix("@viplemail.fr") {
+                                    Text("Chat")
+                                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                                        .foregroundStyle(VipleMailPalette.primary)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 1.5)
+                                        .background(Capsule().fill(VipleMailPalette.primary.opacity(0.12)))
                                 }
                             }
                             Text(contact.contactEmail)
@@ -558,7 +745,7 @@ public struct ComposeMailView: View {
                     HStack(spacing: 6) {
                         ProgressView()
                             .scaleEffect(0.75)
-                        Text("Envoi sur SkyDrive...")
+                        Text("Envoi en cours…")
                             .font(.system(size: 11.5, weight: .medium))
                             .foregroundStyle(VipleMailPalette.primary)
                     }
@@ -618,12 +805,12 @@ public struct ComposeMailView: View {
         }
     }
 
-    // MARK: - Corps du Message Plein Écran (Style Apple Mail)
+    // MARK: - Corps du Message
 
     private var appleMailBodyEditor: some View {
         ZStack(alignment: .topLeading) {
             if bodyField.isEmpty {
-                Text("Rédigez votre message...")
+                Text(isEffectiveChatMode ? "Écrivez votre message instantané…" : "Rédigez votre courrier…")
                     .font(.system(size: 16))
                     .foregroundStyle(VipleMailPalette.inkMuted.opacity(0.65))
                     .padding(.horizontal, 20)
@@ -635,14 +822,14 @@ public struct ComposeMailView: View {
                 .font(.system(size: 16))
                 .foregroundStyle(VipleMailPalette.ink)
                 .focused($focusedField, equals: .body)
-                .frame(minHeight: 360)
+                .frame(minHeight: 320)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .scrollContentBackground(.hidden)
         }
     }
 
-    // MARK: - Bloc Signature Automatique
+    // MARK: - Bloc Signature Automatique (Mail uniquement)
 
     private var signatureBlock: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -676,45 +863,10 @@ public struct ComposeMailView: View {
         .padding(.vertical, 14)
     }
 
-    // MARK: - Barre d'Outils Inférieure Style Apple Mail
+    // MARK: - Barre d'Outils Inférieure
 
     private var appleMailBottomToolbar: some View {
         HStack(spacing: 0) {
-            // 1. Formatage & Listes
-            Menu {
-                Button {
-                    insertAtEndOfBody("\n• ")
-                } label: {
-                    Label("Liste à puces", systemImage: "list.bullet")
-                }
-                Button {
-                    insertAtEndOfBody("\n1. ")
-                } label: {
-                    Label("Liste numérotée", systemImage: "list.number")
-                }
-                Button {
-                    insertAtEndOfBody("\n> ")
-                } label: {
-                    Label("Citation", systemImage: "text.quote")
-                }
-                Divider()
-                Button {
-                    let df = DateFormatter()
-                    df.locale = Locale(identifier: "fr_FR")
-                    df.dateStyle = .full
-                    df.timeStyle = .short
-                    insertAtEndOfBody("\n\(df.string(from: Date()))")
-                } label: {
-                    Label("Insérer la date et l'heure", systemImage: "clock")
-                }
-            } label: {
-                Image(systemName: "textformat.alt")
-                    .font(.system(size: 18, weight: .medium))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-            }
-
-            // 2. Joindre une photo (PhotosPicker)
             PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
                 Image(systemName: "photo.on.rectangle")
                     .font(.system(size: 18, weight: .medium))
@@ -722,7 +874,6 @@ public struct ComposeMailView: View {
                     .padding(.vertical, 10)
             }
 
-            // 3. Joindre un fichier (iCloud Drive / Fichiers)
             Button {
                 isShowingFileImporter = true
             } label: {
@@ -732,7 +883,6 @@ public struct ComposeMailView: View {
                     .padding(.vertical, 10)
             }
 
-            // 4. Carnet de contacts VIP
             Button {
                 contactPickerTarget = .to
                 isShowingContactPicker = true
@@ -743,39 +893,62 @@ public struct ComposeMailView: View {
                     .padding(.vertical, 10)
             }
 
-            // 5. Drapeau de Priorité
-            Menu {
-                Button {
-                    priority = "High"
+            if !isEffectiveChatMode {
+                Menu {
+                    Button {
+                        insertAtEndOfBody("\n• ")
+                    } label: {
+                        Label("Liste à puces", systemImage: "list.bullet")
+                    }
+                    Button {
+                        insertAtEndOfBody("\n1. ")
+                    } label: {
+                        Label("Liste numérotée", systemImage: "list.number")
+                    }
+                    Button {
+                        insertAtEndOfBody("\n> ")
+                    } label: {
+                        Label("Citation", systemImage: "text.quote")
+                    }
                 } label: {
-                    Label("Priorité Haute ❗", systemImage: "exclamationmark.circle.fill")
+                    Image(systemName: "textformat.alt")
+                        .font(.system(size: 18, weight: .medium))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
                 }
-                Button {
-                    priority = "Normal"
-                } label: {
-                    Label("Priorité Normale", systemImage: "equal.circle")
-                }
-                Button {
-                    priority = "Low"
-                } label: {
-                    Label("Priorité Basse ↓", systemImage: "arrow.down.circle")
-                }
-            } label: {
-                Image(systemName: priority == "High" ? "flag.fill" : "flag")
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(priority == "High" ? VipleMailPalette.danger : VipleMailPalette.primary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-            }
 
-            // 6. Enregistrer en brouillon
-            Button {
-                saveAsDraftAndDismiss()
-            } label: {
-                Image(systemName: "tray.and.arrow.down")
-                    .font(.system(size: 18, weight: .medium))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
+                Menu {
+                    Button {
+                        priority = "High"
+                    } label: {
+                        Label("Priorité Haute ❗", systemImage: "exclamationmark.circle.fill")
+                    }
+                    Button {
+                        priority = "Normal"
+                    } label: {
+                        Label("Priorité Normale", systemImage: "equal.circle")
+                    }
+                    Button {
+                        priority = "Low"
+                    } label: {
+                        Label("Priorité Basse ↓", systemImage: "arrow.down.circle")
+                    }
+                } label: {
+                    Image(systemName: priority == "High" ? "flag.fill" : "flag")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(priority == "High" ? VipleMailPalette.danger : VipleMailPalette.primary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                }
+
+                Button {
+                    saveAsDraftAndDismiss()
+                } label: {
+                    Image(systemName: "tray.and.arrow.down")
+                        .font(.system(size: 18, weight: .medium))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                }
             }
         }
         .foregroundStyle(VipleMailPalette.primary)
@@ -790,8 +963,6 @@ public struct ComposeMailView: View {
         )
     }
 
-    // MARK: - Feuille de Sélection de Contacts Viple Mail
-
     private var contactPickerSheet: some View {
         NavigationStack {
             List {
@@ -803,7 +974,11 @@ public struct ComposeMailView: View {
                 } else {
                     ForEach(vm.contacts) { contact in
                         Button {
-                            appendRecipient(contact.contactEmail, to: contactPickerTarget)
+                            if contactPickerTarget == .to && toField.trimmingCharacters(in: .whitespaces).isEmpty {
+                                toField = contact.contactEmail
+                            } else {
+                                appendRecipient(contact.contactEmail, to: contactPickerTarget)
+                            }
                             isShowingContactPicker = false
                         } label: {
                             HStack(spacing: 12) {
@@ -893,14 +1068,22 @@ public struct ComposeMailView: View {
 
     private func populateInitialFields() {
         switch mode {
-        case .newMail(let to, let subject):
+        case .newMail(let to, let subject, let forceMail):
             toField = to
             subjectField = subject
+            if forceMail {
+                hasManualChannelChoice = true
+                deliveryChannel = .mail
+            } else {
+                hasManualChannelChoice = false
+            }
         case .reply(let msg):
             toField = msg.senderEmail
             subjectField = msg.subject.lowercased().hasPrefix("re:") ? msg.subject : "Re: \(msg.subject)"
             threadId = msg.threadId
-            replyToMessageId = msg.id
+            replyToMessageId = msg.replyToMessageId
+            hasManualChannelChoice = true
+            deliveryChannel = .mail
             bodyField = "\n\n--- Le \(msg.formattedFullDate), \(msg.senderName) <\(msg.senderEmail)> a écrit : ---\n\(msg.plainBodyText)"
         case .replyAll(let msg):
             toField = msg.senderEmail
@@ -908,12 +1091,16 @@ public struct ComposeMailView: View {
             isExpandedCcBccFrom = !msg.ccEmail.isEmpty
             subjectField = msg.subject.lowercased().hasPrefix("re:") ? msg.subject : "Re: \(msg.subject)"
             threadId = msg.threadId
-            replyToMessageId = msg.id
+            replyToMessageId = msg.replyToMessageId
+            hasManualChannelChoice = true
+            deliveryChannel = .mail
             bodyField = "\n\n--- Le \(msg.formattedFullDate), \(msg.senderName) <\(msg.senderEmail)> a écrit : ---\n\(msg.plainBodyText)"
         case .forward(let msg):
             subjectField = msg.subject.lowercased().hasPrefix("tr:") ? msg.subject : "Tr: \(msg.subject)"
             threadId = msg.threadId
             attachments = msg.attachments
+            hasManualChannelChoice = true
+            deliveryChannel = .mail
             bodyField = "\n\n---------- Message transféré ----------\nDe : \(msg.senderName) <\(msg.senderEmail)>\nDate : \(msg.formattedFullDate)\nObjet : \(msg.subject)\nÀ : \(msg.recipientEmail)\n\n\(msg.plainBodyText)"
         case .editDraft(let draft):
             draftId = draft.id
@@ -926,24 +1113,48 @@ public struct ComposeMailView: View {
             priority = draft.priority
             attachments = draft.attachments
             threadId = draft.threadId
+            hasManualChannelChoice = true
+            deliveryChannel = .mail
         }
     }
 
-    private func sendMailNow() {
+    private func submitNow() {
+        if isEffectiveChatMode, let peer = detectedVipleMailRecipient {
+            Task {
+                if let session = await vm.sendChatMessage(to: peer, text: bodyField, attachments: attachments) {
+                    vm.closeMessage()
+                    vm.selectedTab = 1
+                    vm.openChatSession(session)
+                    await vm.reloadActiveChatMessages(silent: true)
+                    dismiss()
+                }
+            }
+            return
+        }
+
         Task {
+            let finalBodyText: String
+            if includeSignature && vm.settings.signatureEnabled && !vm.settings.signatureHtml.isEmpty {
+                let cleanSig = vm.settings.signatureHtml.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                finalBodyText = bodyField + "\n\n-- \n" + cleanSig
+            } else {
+                finalBodyText = bodyField
+            }
+
             let ok = await vm.sendOrSaveMail(
                 to: toField,
                 cc: ccField,
                 bcc: bccField,
                 subject: subjectField,
-                bodyText: bodyField,
+                bodyText: finalBodyText,
                 bodyHtml: nil,
                 priority: priority,
                 threadId: threadId,
                 replyToMessageId: replyToMessageId,
                 draftId: draftId,
                 isDraft: false,
-                attachments: attachments
+                attachments: attachments,
+                deliveryMode: "mail"
             )
             if ok {
                 dismiss()
@@ -965,7 +1176,8 @@ public struct ComposeMailView: View {
                 replyToMessageId: replyToMessageId,
                 draftId: draftId,
                 isDraft: true,
-                attachments: attachments
+                attachments: attachments,
+                deliveryMode: "mail"
             )
             dismiss()
         }
