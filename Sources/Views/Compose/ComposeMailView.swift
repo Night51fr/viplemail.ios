@@ -88,7 +88,7 @@ public struct ComposeMailView: View {
         }
 
         let lower = candidate.lowercased()
-        guard lower.hasSuffix("@viplemail.fr"),
+        guard (lower.hasSuffix("@viplemail.fr") || lower.hasSuffix("@cenelis.com")),
               let atIdx = lower.firstIndex(of: "@"),
               lower.distance(from: lower.startIndex, to: atIdx) >= 1,
               !lower.contains(" ") else {
@@ -354,14 +354,20 @@ public struct ComposeMailView: View {
                 .padding(.leading, 16)
 
             if isEffectiveChatMode {
-                // Bandeau d'information Chat instantané @viplemail.fr
+                if vm.sendCapableMailboxes.count > 1 || (vm.isApprovedCenelisAgent && vm.cenelisMailboxAddress == nil) {
+                    directSenderPickerRow
+                    Divider()
+                        .padding(.leading, 16)
+                }
+
+                // Bandeau d'information Chat instantané @viplemail.fr / @cenelis.com
                 HStack(spacing: 10) {
                     Image(systemName: "bubble.left.and.bubble.right.fill")
                         .font(.system(size: 13.5, weight: .bold))
                         .foregroundStyle(VipleMailPalette.primary)
 
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("Session de Chat @viplemail.fr par défaut")
+                        Text("Session de Chat Viple / Cenelis par défaut")
                             .font(.system(size: 12.5, weight: .bold, design: .rounded))
                             .foregroundStyle(VipleMailPalette.ink)
                         Text("Sera retrouvée dans l'onglet Chat. Touchez « Mail » ci-dessus pour envoyer un courrier classique.")
@@ -377,22 +383,30 @@ public struct ComposeMailView: View {
 
                 Divider()
             } else {
-                // Mode Mail Classique : Cc/Cci, De :, Priorité :, Objet :
+                // Mode Mail Classique : Sélecteur rapide « De : » (si plusieurs adresses ou Agent Cenelis) + Cc/Cci + Priorité + Objet
                 if !isExpandedCcBccFrom && ccField.isEmpty && bccField.isEmpty {
+                    if vm.sendCapableMailboxes.count > 1 || (vm.isApprovedCenelisAgent && vm.cenelisMailboxAddress == nil) {
+                        directSenderPickerRow
+                        Divider()
+                            .padding(.leading, 16)
+                    }
+
                     Button {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.84)) {
                             isExpandedCcBccFrom = true
                         }
                     } label: {
                         HStack(spacing: 8) {
-                            Text("Cc/Cci, De :")
+                            Text((vm.sendCapableMailboxes.count > 1 || vm.isApprovedCenelisAgent) ? "Cc/Cci, Priorité" : "Cc/Cci, De :")
                                 .font(.system(size: 15, weight: .regular))
                                 .foregroundStyle(VipleMailPalette.inkSecondary)
 
-                            Text(effectiveSenderEmail)
-                                .font(.system(size: 15, weight: .regular))
-                                .foregroundStyle(VipleMailPalette.inkSecondary)
-                                .lineLimit(1)
+                            if vm.sendCapableMailboxes.count <= 1 && !vm.isApprovedCenelisAgent {
+                                Text(effectiveSenderEmail)
+                                    .font(.system(size: 15, weight: .regular))
+                                    .foregroundStyle(VipleMailPalette.inkSecondary)
+                                    .lineLimit(1)
+                            }
 
                             Spacer()
 
@@ -486,14 +500,32 @@ public struct ComposeMailView: View {
                             if vm.sendCapableMailboxes.count > 1 {
                                 Menu {
                                     ForEach(vm.sendCapableMailboxes, id: \.self) { mbx in
+                                        let isCen = mbx.lowercased().hasSuffix("@cenelis.com")
                                         Button {
                                             senderMailbox = mbx
                                         } label: {
                                             Label(
-                                                "\(user.displayName) <\(mbx)>",
+                                                isCen ? "\(user.displayName) <\(mbx)> (Agent Cenelis)" : "\(user.displayName) <\(mbx)>",
                                                 systemImage: mbx.lowercased() == effectiveSenderEmail.lowercased()
                                                     ? "checkmark.circle.fill"
-                                                    : "envelope"
+                                                    : (isCen ? "checkmark.seal.fill" : "envelope")
+                                            )
+                                        }
+                                    }
+
+                                    if vm.isApprovedCenelisAgent && vm.cenelisMailboxAddress == nil {
+                                        Divider()
+                                        Button {
+                                            Task {
+                                                let ok = await vm.claimOrCustomizeCenelisMailbox(switchImmediately: false)
+                                                if ok, let cen = vm.cenelisMailboxAddress {
+                                                    senderMailbox = cen
+                                                }
+                                            }
+                                        } label: {
+                                            Label(
+                                                "Activer \(vm.suggestedCenelisLocalPart)@cenelis.com",
+                                                systemImage: "checkmark.seal.fill"
                                             )
                                         }
                                     }
@@ -708,7 +740,8 @@ public struct ComposeMailView: View {
                                 Text(contact.displayName)
                                     .font(.system(size: 14.5, weight: .bold))
                                     .foregroundStyle(VipleMailPalette.ink)
-                                if contact.contactEmail.lowercased().hasSuffix("@viplemail.fr") {
+                                if contact.contactEmail.lowercased().hasSuffix("@viplemail.fr")
+                                    || contact.contactEmail.lowercased().hasSuffix("@cenelis.com") {
                                     Text("Chat")
                                         .font(.system(size: 10, weight: .bold, design: .rounded))
                                         .foregroundStyle(VipleMailPalette.primary)
@@ -1074,11 +1107,126 @@ public struct ComposeMailView: View {
         }
     }
 
+    private var directSenderPickerRow: some View {
+        HStack(spacing: 10) {
+            Text("De :")
+                .font(.system(size: 15, weight: .regular))
+                .foregroundStyle(VipleMailPalette.inkSecondary)
+                .frame(width: 34, alignment: .leading)
+
+            if let user = vm.currentUser {
+                Menu {
+                    ForEach(vm.sendCapableMailboxes, id: \.self) { mbx in
+                        let isCen = mbx.lowercased().hasSuffix("@cenelis.com")
+                        Button {
+                            senderMailbox = mbx
+                        } label: {
+                            Label(
+                                isCen ? "\(mbx) • Agent Cenelis" : mbx,
+                                systemImage: mbx.lowercased() == effectiveSenderEmail.lowercased()
+                                    ? "checkmark.circle.fill"
+                                    : (isCen ? "checkmark.seal.fill" : "envelope.fill")
+                            )
+                        }
+                    }
+
+                    if vm.isApprovedCenelisAgent && vm.cenelisMailboxAddress == nil {
+                        Divider()
+                        Button {
+                            Task {
+                                let ok = await vm.claimOrCustomizeCenelisMailbox(switchImmediately: false)
+                                if ok, let cen = vm.cenelisMailboxAddress {
+                                    senderMailbox = cen
+                                }
+                            }
+                        } label: {
+                            Label(
+                                "Activer \(vm.suggestedCenelisLocalPart)@cenelis.com",
+                                systemImage: "checkmark.seal.fill"
+                            )
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        if effectiveSenderEmail.lowercased().hasSuffix("@cenelis.com") {
+                            Image(systemName: "checkmark.seal.fill")
+                                .font(.system(size: 12.5, weight: .bold))
+                                .foregroundStyle(VipleMailPalette.primary)
+                        }
+                        Text(effectiveSenderEmail)
+                            .font(.system(size: 14.5, weight: .semibold))
+                            .foregroundStyle(VipleMailPalette.primary)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 10.5, weight: .bold))
+                            .foregroundStyle(VipleMailPalette.primary)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule()
+                            .fill(VipleMailPalette.primary.opacity(0.10))
+                    )
+                }
+
+                Spacer()
+
+                if vm.isApprovedCenelisAgent,
+                   let cenAddr = vm.cenelisMailboxAddress,
+                   effectiveSenderEmail.lowercased() != cenAddr.lowercased() {
+                    Button {
+                        senderMailbox = cenAddr
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "checkmark.seal.fill")
+                                .font(.system(size: 10.5, weight: .bold))
+                            Text("@cenelis.com")
+                                .font(.system(size: 11.5, weight: .bold, design: .rounded))
+                        }
+                        .foregroundStyle(VipleMailPalette.primary)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background(
+                            Capsule()
+                                .strokeBorder(VipleMailPalette.primary.opacity(0.35), lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                } else if vm.isApprovedCenelisAgent,
+                          effectiveSenderEmail.lowercased().hasSuffix("@cenelis.com"),
+                          let vipAddr = vm.viplePersonalMailboxAddress,
+                          effectiveSenderEmail.lowercased() != vipAddr.lowercased() {
+                    Button {
+                        senderMailbox = vipAddr
+                    } label: {
+                        Text("@viplemail.fr")
+                            .font(.system(size: 11.5, weight: .bold, design: .rounded))
+                            .foregroundStyle(VipleMailPalette.inkSecondary)
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 5)
+                            .background(
+                                Capsule()
+                                    .fill(VipleMailPalette.surfaceSubtle)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
     private func populateInitialFields() {
         let fallbackSender = vm.defaultSendingMailbox
         switch mode {
-        case .newMail(let to, let subject, let forceMail):
-            senderMailbox = fallbackSender
+        case .newMail(let to, let subject, let forceMail, let preferredFromMailbox):
+            if let pref = preferredFromMailbox?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+               !pref.isEmpty {
+                senderMailbox = pref
+            } else {
+                senderMailbox = fallbackSender
+            }
             toField = to
             subjectField = subject
             if forceMail {
@@ -1141,7 +1289,12 @@ public struct ComposeMailView: View {
     private func submitNow() {
         if isEffectiveChatMode, let peer = detectedVipleMailRecipient {
             Task {
-                if let session = await vm.sendChatMessage(to: peer, text: bodyField, attachments: attachments) {
+                if let session = await vm.sendChatMessage(
+                    to: peer,
+                    text: bodyField,
+                    attachments: attachments,
+                    fromMailbox: effectiveSenderEmail
+                ) {
                     vm.closeMessage()
                     vm.selectedTab = 1
                     vm.openChatSession(session)

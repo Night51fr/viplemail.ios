@@ -177,7 +177,10 @@ public struct MailContactsView: View {
                         .background(Circle().fill(VipleMailPalette.surfaceSubtle))
                 }
 
-                if contact.contactEmail.lowercased().hasSuffix("@viplemail.fr") {
+                let isInternalChatPeer = contact.contactEmail.lowercased().hasSuffix("@viplemail.fr")
+                    || contact.contactEmail.lowercased().hasSuffix("@cenelis.com")
+
+                if isInternalChatPeer {
                     Button {
                         Task {
                             await vm.startOrOpenChat(with: contact.contactEmail)
@@ -195,16 +198,16 @@ public struct MailContactsView: View {
                 Button {
                     vm.presentComposer(.newMail(
                         to: contact.contactEmail,
-                        forceMail: contact.contactEmail.lowercased().hasSuffix("@viplemail.fr")
+                        forceMail: isInternalChatPeer
                     ))
                 } label: {
                     Image(systemName: "envelope.fill")
                         .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(contact.contactEmail.lowercased().hasSuffix("@viplemail.fr") ? VipleMailPalette.primary : .white)
+                        .foregroundStyle(isInternalChatPeer ? VipleMailPalette.primary : .white)
                         .frame(width: 36, height: 36)
                         .background(
                             Circle().fill(
-                                contact.contactEmail.lowercased().hasSuffix("@viplemail.fr")
+                                isInternalChatPeer
                                     ? VipleMailPalette.primary.opacity(0.12)
                                     : VipleMailPalette.primary
                             )
@@ -275,9 +278,9 @@ public struct MailContactsView: View {
     private var addOrEditContactSheet: some View {
         NavigationStack {
             Form {
-                Section("Identité & Adresse @viplemail.fr") {
+                Section("Identité & Adresse e-mail") {
                     TextField("Nom complet", text: $contactName)
-                    TextField("Adresse e-mail (ex: nom@viplemail.fr)", text: $contactEmail)
+                    TextField("Adresse e-mail (ex: nom@viplemail.fr ou agent@cenelis.com)", text: $contactEmail)
                         .textInputAutocapitalization(.never)
                         .keyboardType(.emailAddress)
                         .autocorrectionDisabled()

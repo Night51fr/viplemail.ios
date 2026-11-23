@@ -45,14 +45,18 @@ public final class VipleMailViewModel: ObservableObject {
     @Published public var pendingAppleSuggestedFirstName: String = ""
     @Published public var pendingAppleSuggestedLastName: String = ""
 
-    // SSO Inter-Applications (Partagé avec Livria Store, Livria Social, Livria Marketplace & Viple & Moi)
+    // SSO Inter-Applications (Partagé avec Livria Store, Livria Social, Livria Marketplace, Cenelis Workspace & Viple & Moi)
     @Published public var detectedCrossAppAccount: VipleCrossAppAccount? = nil
+    @Published public var detectedWorkspaceEmailHint: String? = nil
     @Published public var isShowingCrossAppSSOPrompt: Bool = false
     @Published public var isAcceptingCrossAppSSO: Bool = false
 
     // Données Réelles Synchronisées (Zéro Donnée de Démo)
     @Published public var isAuthenticated: Bool = false
     @Published public var currentUser: VipleMailUser? = nil
+    @Published public var isApprovedCenelisAgent: Bool = false
+    @Published public var isClaimingCenelisMailbox: Bool = false
+    @Published public var hasDismissedCenelisInboxBanner: Bool = false
     @Published public var activeMailboxAddress: String = ""
     @Published public var availableMailboxes: [String] = []
     @Published public var externalAccounts: [ExternalMailAccount] = []
@@ -138,6 +142,7 @@ public final class VipleMailViewModel: ObservableObject {
 
     private let defaults = UserDefaults.standard
     private let sharedGroupDefaults = UserDefaults(suiteName: "group.store.livria.shared")
+    private let sharedCenelisGroupDefaults = UserDefaults(suiteName: "group.com.viplenetwork.shared")
     private let savedEmailKey = "viple.mail.ios.savedEmail.v1"
     private let savedOwnerEmailKey = "viple.mail.ios.savedOwnerEmail.v1"
     private let savedCidKey = "viple.mail.ios.savedCid.v1"
@@ -198,10 +203,61 @@ public final class VipleMailViewModel: ObservableObject {
     /// Boîtes hébergées Viple / Cenelis rattachées au compte
     public var hostedMailboxes: [String] {
         let extSet = Set(externalAccounts.map { $0.email.lowercased() })
-        let base = availableMailboxes.filter { !extSet.contains($0.lowercased()) && $0.lowercased() != "__all__" }
-        if !base.isEmpty { return base }
+        let merged = deduplicatedMailboxes(
+            [currentUser?.cenelisMailAddress, currentUser?.vipleMailAddress]
+            + availableMailboxes.map { Optional($0) }
+        ).filter { !extSet.contains($0.lowercased()) && $0.lowercased() != "__all__" }
+        if !merged.isEmpty { return merged }
         let p = primaryHostedEmail
         return p.isEmpty ? [] : [p]
+    }
+
+    /// Adresse professionnelle officielle @cenelis.com de l'agent habilité (si déjà rattachée)
+    public var cenelisMailboxAddress: String? {
+        if let cm = currentUser?.cenelisMailAddress?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+           !cm.isEmpty,
+           cm.hasSuffix("@cenelis.com") {
+            return cm
+        }
+        return hostedMailboxes.first(where: { $0.lowercased().hasSuffix("@cenelis.com") })?.lowercased()
+    }
+
+    /// Adresse @viplemail.fr rattachée au compte
+    public var viplePersonalMailboxAddress: String? {
+        if let vm = currentUser?.vipleMailAddress?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+           !vm.isEmpty,
+           vm.hasSuffix("@viplemail.fr") {
+            return vm
+        }
+        return hostedMailboxes.first(where: { $0.lowercased().hasSuffix("@viplemail.fr") })?.lowercased()
+    }
+
+    /// Identifiant local suggéré pour l'adresse @cenelis.com de l'agent
+    public var suggestedCenelisLocalPart: String {
+        let source = cenelisMailboxAddress ?? viplePersonalMailboxAddress ?? currentUser?.email ?? currentEmail
+        let rawLocal = source.split(separator: "@").first.map(String.init) ?? ""
+        let cleaned = rawLocal.lowercased().filter { $0.isLetter || $0.isNumber || $0 == "." || $0 == "-" || $0 == "_" }
+        return cleaned.count >= 2 ? cleaned : "agent"
+    }
+
+    /// Indique s'il faut proposer le bandeau @cenelis.com en haut de la boîte de réception pour un agent Cenelis
+    public var shouldShowCenelisInboxProposalBanner: Bool {
+        guard isAuthenticated, isApprovedCenelisAgent, !hasDismissedCenelisInboxBanner else { return false }
+        if isUnifiedInboxActive { return false }
+        return !currentEmail.lowercased().hasSuffix("@cenelis.com")
+    }
+
+    public func dismissCenelisInboxProposalBanner() {
+        let key = cenelisBannerDismissKey(for: primaryHostedEmail)
+        defaults.set(true, forKey: key)
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+            hasDismissedCenelisInboxBanner = true
+        }
+    }
+
+    private func cenelisBannerDismissKey(for ownerEmail: String) -> String {
+        let norm = ownerEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return "viple.mail.ios.dismissedCenelisBanner.\(norm.isEmpty ? "default" : norm)"
     }
 
     /// Boîtes pouvant émettre des courriers (toutes les boîtes Viple/Cenelis + les boîtes externes ayant SMTP activé)
@@ -397,6 +453,11 @@ public final class VipleMailViewModel: ObservableObject {
 
                 self.isAuthenticated = true
                 self.currentUser = user
+                let approvedCenelis = (res.isApprovedCenelisAgent == true)
+                    || (user.isApprovedCenelisAgent == true)
+                    || (user.accountType?.lowercased() == "cenelis")
+                    || ((user.cenelisMailAddress ?? "").lowercased().hasSuffix("@cenelis.com"))
+                self.isApprovedCenelisAgent = approvedCenelis
                 self.isUnifiedInboxActive = unified
                 self.isExternalMailboxActive = (res.isExternalMailbox == true)
                 self.activeExternalProviderName = res.externalProviderName
@@ -430,6 +491,7 @@ public final class VipleMailViewModel: ObservableObject {
                     self.settings = srvSettings
                 }
                 let ownerPrimary = user.primaryAddress.lowercased()
+                self.hasDismissedCenelisInboxBanner = defaults.bool(forKey: cenelisBannerDismissKey(for: ownerPrimary))
                 defaults.set(ownerPrimary, forKey: savedOwnerEmailKey)
                 defaults.set(resolvedMailbox, forKey: savedEmailKey)
                 if let c = user.cid, !c.isEmpty {
@@ -490,6 +552,9 @@ public final class VipleMailViewModel: ObservableObject {
             if let u = res.user {
                 self.currentUser = u
             }
+            if let agentFlag = res.isApprovedCenelisAgent {
+                self.isApprovedCenelisAgent = agentFlag
+            }
             if let extList = res.externalAccounts {
                 self.externalAccounts = extList
             }
@@ -513,6 +578,64 @@ public final class VipleMailViewModel: ObservableObject {
             showToast(switchedAddress == "__all__" ? "Boîte active : Toutes les boîtes" : "Boîte active : \(switchedAddress)")
         } catch {
             showToast(error.localizedDescription)
+        }
+    }
+
+    @discardableResult
+    public func claimOrCustomizeCenelisMailbox(
+        desiredLocalPart: String? = nil,
+        switchImmediately: Bool = true
+    ) async -> Bool {
+        guard !isClaimingCenelisMailbox else { return false }
+        isClaimingCenelisMailbox = true
+        defer { isClaimingCenelisMailbox = false }
+
+        do {
+            let res = try await VipleMailAPIClient.shared.claimCenelisMailbox(
+                desiredLocalPart: desiredLocalPart,
+                switchActive: switchImmediately,
+                ownerEmail: primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail,
+                cid: currentCid
+            )
+            guard res.ok else {
+                showToast(res.error ?? "Impossible d'activer l'adresse @cenelis.com.")
+                return false
+            }
+
+            if let tok = res.token, !tok.isEmpty {
+                defaults.set(tok, forKey: savedTokenKey)
+                VipleMailAPIClient.shared.authToken = tok
+            }
+            if let u = res.user {
+                self.currentUser = u
+            }
+            self.isApprovedCenelisAgent = true
+            if let extList = res.externalAccounts {
+                self.externalAccounts = extList
+            }
+            let claimedCenelis = (res.cenelisMailAddress ?? res.mailbox ?? "").lowercased()
+            let nextActive = switchImmediately && !claimedCenelis.isEmpty
+                ? claimedCenelis
+                : (res.mailbox?.lowercased() ?? currentEmail.lowercased())
+
+            if let list = res.availableMailboxes, !list.isEmpty {
+                self.availableMailboxes = deduplicatedMailboxes(
+                    list.map { Optional($0) } + [claimedCenelis.isEmpty ? nil : claimedCenelis]
+                )
+            }
+            if switchImmediately && !claimedCenelis.isEmpty {
+                self.isUnifiedInboxActive = false
+                self.isExternalMailboxActive = false
+                self.activeExternalProviderName = nil
+                self.activeMailboxAddress = nextActive
+                defaults.set(nextActive, forKey: savedEmailKey)
+            }
+            await refreshBootstrap(email: nextActive, cid: currentCid)
+            showToast(res.message ?? "Votre boîte officielle \(claimedCenelis) est active.")
+            return true
+        } catch {
+            showToast(error.localizedDescription)
+            return false
         }
     }
 
@@ -710,6 +833,9 @@ public final class VipleMailViewModel: ObservableObject {
     ) async {
         let resolvedMbx = (preferredMailbox?.isEmpty == false ? preferredMailbox! : user.primaryAddress).lowercased()
         self.currentUser = user
+        self.isApprovedCenelisAgent = (user.isApprovedCenelisAgent == true)
+            || (user.accountType?.lowercased() == "cenelis")
+            || ((user.cenelisMailAddress ?? "").lowercased().hasSuffix("@cenelis.com"))
         self.activeMailboxAddress = resolvedMbx
         if let availableMailboxes, !availableMailboxes.isEmpty {
             self.availableMailboxes = deduplicatedMailboxes(availableMailboxes.map { Optional($0) } + [resolvedMbx, user.vipleMailAddress, user.cenelisMailAddress])
@@ -741,8 +867,12 @@ public final class VipleMailViewModel: ObservableObject {
         defaults.removeObject(forKey: savedTokenKey)
         VipleMailAPIClient.shared.authToken = nil
         sharedGroupDefaults?.removeObject(forKey: "viple.crossapp.mail.account")
+        sharedCenelisGroupDefaults?.removeObject(forKey: "viple.crossapp.mail.account")
         isAuthenticated = false
         currentUser = nil
+        isApprovedCenelisAgent = false
+        isClaimingCenelisMailbox = false
+        hasDismissedCenelisInboxBanner = false
         activeMailboxAddress = ""
         availableMailboxes = []
         externalAccounts = []
@@ -788,6 +918,7 @@ public final class VipleMailViewModel: ObservableObject {
         )
         if let data = try? JSONEncoder().encode(snapshot) {
             sharedGroupDefaults?.set(data, forKey: "viple.crossapp.mail.account")
+            sharedCenelisGroupDefaults?.set(data, forKey: "viple.crossapp.mail.account")
         }
     }
 
@@ -795,9 +926,12 @@ public final class VipleMailViewModel: ObservableObject {
         // Si l'application est déjà connectée à un compte, ne JAMAIS proposer de connexion automatique
         if isAuthenticated {
             self.detectedCrossAppAccount = nil
+            self.detectedWorkspaceEmailHint = nil
             self.isShowingCrossAppSSOPrompt = false
             return
         }
+
+        self.detectedWorkspaceEmailHint = VipleMailAPIClient.shared.sharedCenelisWorkspaceEmail()
 
         // Recherche uniquement par concordance stricte (identifiant du téléphone + adresse IP simultanément)
         let candidate: VipleCrossAppAccount? = await VipleMailAPIClient.shared.discoverCrossAppAccount()
@@ -1146,12 +1280,21 @@ public final class VipleMailViewModel: ObservableObject {
         }
     }
 
-    // MARK: - 4b. Sessions de Discussion Instantanée « Chat @viplemail.fr »
+    // MARK: - 4b. Sessions de Discussion Instantanée « Chat @viplemail.fr & @cenelis.com »
+
+    public var effectiveChatMailboxEmail: String {
+        let cur = currentEmail.lowercased()
+        if !isUnifiedInboxActive && !isExternalMailboxActive && isInternalMailbox(cur) {
+            return cur
+        }
+        return primaryHostedEmail
+    }
 
     public func refreshChatSessions() async {
-        guard !currentEmail.isEmpty else { return }
+        let chatMbx = effectiveChatMailboxEmail
+        guard !chatMbx.isEmpty else { return }
         do {
-            let res = try await VipleMailAPIClient.shared.fetchChatSessions(email: currentEmail, cid: currentCid)
+            let res = try await VipleMailAPIClient.shared.fetchChatSessions(email: chatMbx, cid: currentCid)
             if res.ok {
                 self.chatSessions = res.sessions ?? []
                 self.chatUnreadCount = res.chatUnreadCount ?? self.chatSessions.reduce(0) { $0 + $1.unreadCount }
@@ -1164,7 +1307,8 @@ public final class VipleMailViewModel: ObservableObject {
 
     public func startOrOpenChat(with peerEmail: String) async {
         let cleanPeer = peerEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !cleanPeer.isEmpty, !currentEmail.isEmpty else { return }
+        let chatMbx = effectiveChatMailboxEmail
+        guard !cleanPeer.isEmpty, !chatMbx.isEmpty else { return }
 
         if let existing = chatSessions.first(where: { $0.peerEmail.lowercased() == cleanPeer }) {
             self.selectedTab = 1
@@ -1177,7 +1321,7 @@ public final class VipleMailViewModel: ObservableObject {
             let res = try await VipleMailAPIClient.shared.fetchChatMessages(
                 sessionId: nil,
                 peerEmail: cleanPeer,
-                email: currentEmail,
+                email: chatMbx,
                 cid: currentCid
             )
             if res.ok, let session = res.session {
@@ -1221,12 +1365,13 @@ public final class VipleMailViewModel: ObservableObject {
     }
 
     public func reloadActiveChatMessages(silent: Bool = false) async {
-        guard let active = openedChatSession, !currentEmail.isEmpty else { return }
+        let chatMbx = effectiveChatMailboxEmail
+        guard let active = openedChatSession, !chatMbx.isEmpty else { return }
         do {
             let res = try await VipleMailAPIClient.shared.fetchChatMessages(
                 sessionId: active.id,
                 peerEmail: active.peerEmail,
-                email: currentEmail,
+                email: chatMbx,
                 cid: currentCid
             )
             if res.ok {
@@ -1257,11 +1402,16 @@ public final class VipleMailViewModel: ObservableObject {
     public func sendChatMessage(
         to recipientEmail: String,
         text: String,
-        attachments: [VipleMailAttachment] = []
+        attachments: [VipleMailAttachment] = [],
+        fromMailbox: String? = nil
     ) async -> VipleChatSession? {
         let cleanRecipient = recipientEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !currentEmail.isEmpty, !cleanRecipient.isEmpty, (!cleanText.isEmpty || !attachments.isEmpty) else {
+        let explicitSender = fromMailbox?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        let resolvedSender = (!explicitSender.isEmpty && isInternalMailbox(explicitSender))
+            ? explicitSender
+            : effectiveChatMailboxEmail
+        guard !resolvedSender.isEmpty, !cleanRecipient.isEmpty, (!cleanText.isEmpty || !attachments.isEmpty) else {
             return nil
         }
 
@@ -1270,7 +1420,7 @@ public final class VipleMailViewModel: ObservableObject {
 
         do {
             let res = try await VipleMailAPIClient.shared.sendChatMessage(
-                senderEmail: currentEmail,
+                senderEmail: resolvedSender,
                 senderCid: currentCid,
                 recipientEmail: cleanRecipient,
                 bodyText: cleanText,

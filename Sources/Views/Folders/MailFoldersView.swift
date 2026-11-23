@@ -71,16 +71,32 @@ public struct MailFoldersView: View {
 
                 ForEach(vm.hostedMailboxes, id: \.self) { mbx in
                     let active = !vm.isUnifiedInboxActive && mbx.lowercased() == vm.currentEmail.lowercased()
+                    let isCenelis = mbx.lowercased().hasSuffix("@cenelis.com")
                     mailboxSwitcherRow(
                         title: mbx,
-                        subtitle: mbx.hasSuffix("@cenelis.com") ? "Groupe Cenelis • Cenelis MailRTE" : "Viple Mail • Cenelis MailRTE",
-                        icon: "checkmark.shield.fill",
+                        subtitle: isCenelis ? "Agent Groupe Cenelis • Sceau Cenelis SA & MailRTE" : "Viple Mail • Cenelis MailRTE",
+                        icon: isCenelis ? "checkmark.seal.fill" : "checkmark.shield.fill",
                         tint: VipleMailPalette.primary,
                         isActive: active
                     ) {
                         Task {
                             vm.selectedTab = 0
                             await vm.switchActiveMailbox(to: mbx)
+                        }
+                    }
+                }
+
+                if vm.isApprovedCenelisAgent && vm.cenelisMailboxAddress == nil {
+                    mailboxSwitcherRow(
+                        title: "\(vm.suggestedCenelisLocalPart)@cenelis.com",
+                        subtitle: "Proposée pour votre compte Agent Groupe Cenelis • Toucher pour activer",
+                        icon: "checkmark.seal.fill",
+                        tint: VipleMailPalette.primary,
+                        isActive: false
+                    ) {
+                        Task {
+                            vm.selectedTab = 0
+                            _ = await vm.claimOrCustomizeCenelisMailbox(switchImmediately: true)
                         }
                     }
                 }

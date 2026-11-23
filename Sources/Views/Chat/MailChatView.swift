@@ -9,11 +9,15 @@ public struct MailChatView: View {
     @State private var searchQuery: String = ""
     @State private var isShowingNewChatSheet: Bool = false
     @State private var newChatAddress: String = ""
+    @State private var newChatDefaultDomain: String = "viplemail.fr"
 
     public init() {}
 
     private var vipleMailContacts: [VipleMailContact] {
-        vm.contacts.filter { $0.contactEmail.lowercased().hasSuffix("@viplemail.fr") }
+        vm.contacts.filter {
+            let em = $0.contactEmail.lowercased()
+            return em.hasSuffix("@viplemail.fr") || em.hasSuffix("@cenelis.com")
+        }
     }
 
     private var filteredSessions: [VipleChatSession] {
@@ -91,7 +95,7 @@ public struct MailChatView: View {
                     Text("Chat")
                         .font(.system(size: 22, weight: .black, design: .rounded))
                         .foregroundStyle(VipleMailPalette.ink)
-                    Text("Discussions instantanées @viplemail.fr")
+                    Text("Discussions instantanées @viplemail.fr & @cenelis.com")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(VipleMailPalette.inkSecondary)
                 }
@@ -100,6 +104,7 @@ public struct MailChatView: View {
 
                 Button {
                     newChatAddress = ""
+                    newChatDefaultDomain = vm.currentEmail.lowercased().hasSuffix("@cenelis.com") ? "cenelis.com" : "viplemail.fr"
                     isShowingNewChatSheet = true
                 } label: {
                     Label("Nouveau chat", systemImage: "plus.bubble.fill")
@@ -114,7 +119,7 @@ public struct MailChatView: View {
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(VipleMailPalette.primary)
-                TextField("Rechercher une discussion @viplemail.fr…", text: $searchQuery)
+                TextField("Rechercher une discussion Viple / Cenelis…", text: $searchQuery)
                     .font(.system(size: 14.5))
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -176,9 +181,10 @@ public struct MailChatView: View {
     }
 
     private func chatSessionRow(_ session: VipleChatSession) -> some View {
-        let isSentByMe = session.lastSenderEmail.lowercased() == vm.currentEmail.lowercased()
+        let isSentByMe = session.lastSenderEmail.lowercased() == vm.effectiveChatMailboxEmail.lowercased()
+            || session.lastSenderEmail.lowercased() == vm.currentEmail.lowercased()
         let previewText = session.lastMessageSnippet.isEmpty
-            ? "Nouvelle discussion @viplemail.fr"
+            ? "Nouvelle discussion instantanée"
             : (isSentByMe ? "Vous : \(session.lastMessageSnippet)" : session.lastMessageSnippet)
 
         return HStack(spacing: 12) {
@@ -246,7 +252,7 @@ public struct MailChatView: View {
             Text("Aucune discussion pour le moment")
                 .font(.system(size: 18, weight: .bold, design: .rounded))
                 .foregroundStyle(VipleMailPalette.ink)
-            Text("Lorsque vous écrivez à une adresse @viplemail.fr en mode « Chat », votre conversation instantanée s'affiche ici.")
+            Text("Lorsque vous écrivez à une adresse @viplemail.fr ou @cenelis.com en mode « Chat », votre conversation instantanée s'affiche ici.")
                 .font(.system(size: 13.5))
                 .foregroundStyle(VipleMailPalette.inkSecondary)
                 .multilineTextAlignment(.center)
@@ -254,9 +260,10 @@ public struct MailChatView: View {
 
             Button {
                 newChatAddress = ""
+                newChatDefaultDomain = vm.currentEmail.lowercased().hasSuffix("@cenelis.com") ? "cenelis.com" : "viplemail.fr"
                 isShowingNewChatSheet = true
             } label: {
-                Label("Démarrer un Chat @viplemail.fr", systemImage: "plus.bubble.fill")
+                Label("Démarrer un Chat Viple / Cenelis", systemImage: "plus.bubble.fill")
                     .font(.system(size: 14, weight: .bold, design: .rounded))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 18)
@@ -270,14 +277,14 @@ public struct MailChatView: View {
     private var newChatStartSheet: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Destinataire @viplemail.fr")
+                Text("Destinataire @viplemail.fr ou @cenelis.com")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(VipleMailPalette.inkSecondary)
 
                 HStack(spacing: 8) {
                     Image(systemName: "at")
                         .foregroundStyle(VipleMailPalette.primary)
-                    TextField("identifiant ou nom@viplemail.fr", text: $newChatAddress)
+                    TextField("identifiant, nom@viplemail.fr ou agent@cenelis.com", text: $newChatAddress)
                         .textInputAutocapitalization(.never)
                         .keyboardType(.emailAddress)
                         .autocorrectionDisabled()
@@ -286,14 +293,41 @@ public struct MailChatView: View {
                 .background(RoundedRectangle(cornerRadius: 13).fill(VipleMailPalette.surface))
                 .overlay(RoundedRectangle(cornerRadius: 13).stroke(VipleMailPalette.border, lineWidth: 1))
 
+                HStack(spacing: 8) {
+                    ForEach(["viplemail.fr", "cenelis.com"], id: \.self) { dom in
+                        let selected = newChatAddress.lowercased().hasSuffix("@\(dom)")
+                            || (!newChatAddress.contains("@") && newChatDefaultDomain == dom)
+                        Button {
+                            newChatDefaultDomain = dom
+                            let local = newChatAddress.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "@").first.map(String.init) ?? ""
+                            if !local.isEmpty {
+                                newChatAddress = "\(local.lowercased())@\(dom)"
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: dom == "cenelis.com" ? "checkmark.seal.fill" : "envelope.fill")
+                                    .font(.system(size: 10.5, weight: .bold))
+                                Text("@\(dom)")
+                                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                            }
+                            .foregroundStyle(selected ? .white : VipleMailPalette.primary)
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 6)
+                            .background(Capsule().fill(selected ? VipleMailPalette.primary : VipleMailPalette.primary.opacity(0.10)))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Spacer()
+                }
+
                 Button {
                     var clean = newChatAddress.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                     guard !clean.isEmpty else { return }
                     if !clean.contains("@") {
-                        clean = "\(clean)@viplemail.fr"
+                        clean = "\(clean)@\(newChatDefaultDomain)"
                     }
-                    guard clean.hasSuffix("@viplemail.fr") else {
-                        vm.showToast("Le Chat instantané est réservé aux adresses @viplemail.fr.")
+                    guard clean.hasSuffix("@viplemail.fr") || clean.hasSuffix("@cenelis.com") else {
+                        vm.showToast("Le Chat instantané est réservé aux adresses @viplemail.fr et @cenelis.com.")
                         return
                     }
                     isShowingNewChatSheet = false
@@ -310,7 +344,7 @@ public struct MailChatView: View {
                 }
 
                 if !vipleMailContacts.isEmpty {
-                    Text("VOS CONTACTS @VIPLEMAIL.FR")
+                    Text("VOS CONTACTS VIPLE & CENELIS")
                         .font(.system(size: 11, weight: .black, design: .rounded))
                         .foregroundStyle(VipleMailPalette.inkMuted)
                         .padding(.top, 6)
@@ -703,7 +737,7 @@ public struct MailChatConversationView: View {
             }
             .padding(.bottom, 2)
 
-            TextField("Message @viplemail.fr…", text: $draftText, axis: .vertical)
+            TextField("Message instantané…", text: $draftText, axis: .vertical)
                 .font(.system(size: 15.5))
                 .lineLimit(1...5)
                 .padding(.horizontal, 14)

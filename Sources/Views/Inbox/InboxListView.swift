@@ -13,6 +13,14 @@ public struct InboxListView: View {
         VStack(spacing: 0) {
             folderAndSearchHeader
 
+            if vm.shouldShowCenelisInboxProposalBanner && vm.activeFolderId == "Inbox" && vm.searchQuery.isEmpty && !vm.isSelectionMode {
+                cenelisAgentProposalBanner
+                    .padding(.horizontal, 14)
+                    .padding(.top, 10)
+                    .padding(.bottom, 4)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
             if vm.isSelectionMode {
                 bulkSelectionHeaderBar
             }
@@ -212,6 +220,113 @@ public struct InboxListView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background(VipleMailPalette.surface)
+    }
+
+    private var cenelisAgentProposalBanner: some View {
+        let proposedAddress = vm.cenelisMailboxAddress ?? "\(vm.suggestedCenelisLocalPart)@cenelis.com"
+        let alreadyAssigned = vm.cenelisMailboxAddress != nil
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(VipleMailPalette.primary.opacity(0.14))
+                        .frame(width: 38, height: 38)
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(VipleMailPalette.primary)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 5) {
+                        Text("AGENT HABILITÉ GROUPE CENELIS")
+                            .font(.system(size: 10, weight: .black, design: .rounded))
+                            .foregroundStyle(VipleMailPalette.primary)
+                        Spacer()
+                        Button {
+                            vm.dismissCenelisInboxProposalBanner()
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(VipleMailPalette.inkMuted)
+                                .padding(4)
+                        }
+                        .accessibilityLabel("Masquer la suggestion @cenelis.com")
+                    }
+
+                    Text("Votre boîte professionnelle \(proposedAddress) est disponible")
+                        .font(.system(size: 13.5, weight: .bold, design: .rounded))
+                        .foregroundStyle(VipleMailPalette.ink)
+
+                    Text("Ouvrez directement votre messagerie @cenelis.com (sceau « Vérifiée : Cenelis SA » & Cenelis MailRTE) ou réunissez vos deux boîtes.")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(VipleMailPalette.inkSecondary)
+                }
+            }
+
+            HStack(spacing: 8) {
+                Button {
+                    Task {
+                        if let existing = vm.cenelisMailboxAddress {
+                            await vm.switchActiveMailbox(to: existing)
+                        } else {
+                            _ = await vm.claimOrCustomizeCenelisMailbox(switchImmediately: true)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        if vm.isSwitchingMailbox || vm.isClaimingCenelisMailbox {
+                            ProgressView()
+                                .tint(.white)
+                                .scaleEffect(0.75)
+                        } else {
+                            Image(systemName: "checkmark.seal.fill")
+                                .font(.system(size: 12, weight: .bold))
+                        }
+                        Text(alreadyAssigned ? "Ouvrir \(proposedAddress)" : "Activer \(proposedAddress)")
+                            .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 9)
+                    .padding(.horizontal, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 11, style: .continuous)
+                            .fill(VipleMailPalette.heroGradient)
+                    )
+                }
+                .disabled(vm.isSwitchingMailbox || vm.isClaimingCenelisMailbox)
+
+                if alreadyAssigned {
+                    Button {
+                        Task {
+                            await vm.switchActiveMailbox(to: "__all__")
+                        }
+                    } label: {
+                        Label("Les 2 boîtes", systemImage: "tray.2.fill")
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundStyle(VipleMailPalette.primary)
+                            .padding(.vertical, 9)
+                            .padding(.horizontal, 12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                    .fill(VipleMailPalette.primary.opacity(0.11))
+                            )
+                    }
+                    .disabled(vm.isSwitchingMailbox)
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(VipleMailPalette.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(VipleMailPalette.primary.opacity(0.28), lineWidth: 1)
+        )
     }
 
     private func focusedSegmentButton(index: Int, title: String, icon: String) -> some View {

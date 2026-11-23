@@ -217,16 +217,31 @@ public struct VipleMailMainView: View {
 
                     Section("Boîtes Viple & Cenelis") {
                         ForEach(vm.hostedMailboxes, id: \.self) { mbx in
+                            let isCenelis = mbx.lowercased().hasSuffix("@cenelis.com")
+                            let isActive = !vm.isUnifiedInboxActive && mbx.lowercased() == vm.currentEmail.lowercased()
                             Button {
                                 Task {
                                     await vm.switchActiveMailbox(to: mbx)
                                 }
                             } label: {
                                 Label(
-                                    mbx,
-                                    systemImage: (!vm.isUnifiedInboxActive && mbx.lowercased() == vm.currentEmail.lowercased())
+                                    isCenelis ? "\(mbx) (Agent Cenelis)" : mbx,
+                                    systemImage: isActive
                                         ? "checkmark.circle.fill"
-                                        : "envelope.fill"
+                                        : (isCenelis ? "checkmark.seal.fill" : "envelope.fill")
+                                )
+                            }
+                        }
+
+                        if vm.isApprovedCenelisAgent && vm.cenelisMailboxAddress == nil {
+                            Button {
+                                Task {
+                                    _ = await vm.claimOrCustomizeCenelisMailbox(switchImmediately: true)
+                                }
+                            } label: {
+                                Label(
+                                    "Activer \(vm.suggestedCenelisLocalPart)@cenelis.com",
+                                    systemImage: "checkmark.seal.fill"
                                 )
                             }
                         }
@@ -287,6 +302,11 @@ public struct VipleMailMainView: View {
                     .foregroundStyle(VipleMailPalette.ink)
                     .lineLimit(1)
                 HStack(spacing: 4) {
+                    if !vm.isUnifiedInboxActive && vm.currentEmail.lowercased().hasSuffix("@cenelis.com") {
+                        Image(systemName: "checkmark.seal.fill")
+                            .font(.system(size: 9.5, weight: .bold))
+                            .foregroundStyle(VipleMailPalette.primary)
+                    }
                     Text(vm.activeMailboxDisplayLabel)
                         .font(.system(size: 10.5, weight: .semibold))
                         .foregroundStyle(VipleMailPalette.primary)

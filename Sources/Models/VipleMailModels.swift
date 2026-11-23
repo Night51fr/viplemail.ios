@@ -21,12 +21,14 @@ public struct VipleMailBootstrapResponse: Codable, Sendable {
     public let isExternalMailbox: Bool?
     public let externalProviderName: String?
     public let isUnifiedInbox: Bool?
+    public let isApprovedCenelisAgent: Bool?
 }
 
 public struct VipleMailAuthResponse: Codable, Sendable {
     public let ok: Bool
     public let token: String?
     public let accountType: String?
+    public let isApprovedCenelisAgent: Bool?
     public let error: String?
     public let needsOnboarding: Bool?
     public let appleUserId: String?
@@ -49,6 +51,22 @@ public struct VipleMailSwitchMailboxResponse: Codable, Sendable {
     public let isUnifiedInbox: Bool?
     public let isExternalMailbox: Bool?
     public let externalProviderName: String?
+    public let isApprovedCenelisAgent: Bool?
+    public let vipleMailAddress: String?
+    public let cenelisMailAddress: String?
+    public let availableMailboxes: [String]?
+    public let externalAccounts: [ExternalMailAccount]?
+    public let token: String?
+    public let user: VipleMailUser?
+}
+
+public struct VipleMailClaimCenelisResponse: Codable, Sendable {
+    public let ok: Bool
+    public let error: String?
+    public let message: String?
+    public let mailbox: String?
+    public let isUnifiedInbox: Bool?
+    public let isApprovedCenelisAgent: Bool?
     public let vipleMailAddress: String?
     public let cenelisMailAddress: String?
     public let availableMailboxes: [String]?
@@ -136,6 +154,7 @@ public struct VipleMailUser: Codable, Identifiable, Equatable, Sendable {
     public let vipleMailAddress: String?
     public let cenelisMailAddress: String?
     public let accountType: String?
+    public let isApprovedCenelisAgent: Bool?
     public var displayName: String
     public let firstName: String?
     public let lastName: String?
@@ -148,7 +167,7 @@ public struct VipleMailUser: Codable, Identifiable, Equatable, Sendable {
     public let location: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, email, vipleMailAddress, cenelisMailAddress, accountType, displayName, firstName, lastName, cid, puid, avatarUrl, colorScheme, personalMessage, bio, location
+        case id, email, vipleMailAddress, cenelisMailAddress, accountType, isApprovedCenelisAgent, displayName, firstName, lastName, cid, puid, avatarUrl, colorScheme, personalMessage, bio, location
     }
 
     public init(from decoder: Decoder) throws {
@@ -164,6 +183,7 @@ public struct VipleMailUser: Codable, Identifiable, Equatable, Sendable {
         self.vipleMailAddress = try? c.decode(String.self, forKey: .vipleMailAddress)
         self.cenelisMailAddress = try? c.decode(String.self, forKey: .cenelisMailAddress)
         self.accountType = try? c.decode(String.self, forKey: .accountType)
+        self.isApprovedCenelisAgent = try? c.decode(Bool.self, forKey: .isApprovedCenelisAgent)
         self.displayName = (try? c.decode(String.self, forKey: .displayName)) ?? self.email
         self.firstName = try? c.decode(String.self, forKey: .firstName)
         self.lastName = try? c.decode(String.self, forKey: .lastName)
@@ -760,7 +780,7 @@ public enum ComposeDeliveryChannel: String, CaseIterable, Identifiable, Sendable
 }
 
 public enum MailComposeMode: Equatable, Sendable {
-    case newMail(to: String = "", subject: String = "", forceMail: Bool = false)
+    case newMail(to: String = "", subject: String = "", forceMail: Bool = false, preferredFromMailbox: String? = nil)
     case reply(VipleMailMessage)
     case replyAll(VipleMailMessage)
     case forward(VipleMailMessage)

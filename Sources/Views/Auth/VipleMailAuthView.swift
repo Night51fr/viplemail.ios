@@ -266,10 +266,37 @@ public struct VipleMailAuthView: View {
                     )
             }
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 Text("Adresse @viplemail.fr, @cenelis.com ou identifiant")
                     .font(.system(size: 12.5, weight: .bold))
                     .foregroundStyle(VipleMailPalette.inkSecondary)
+
+                if let wsHint = vm.detectedWorkspaceEmailHint,
+                   vm.detectedCrossAppAccount == nil,
+                   loginEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() != wsHint {
+                    Button {
+                        loginEmail = wsHint
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.seal.fill")
+                                .font(.system(size: 12, weight: .bold))
+                            Text("Utiliser la session Cenelis Workspace : \(wsHint)")
+                                .font(.system(size: 11.5, weight: .bold, design: .rounded))
+                                .lineLimit(1)
+                            Spacer()
+                            Image(systemName: "arrow.down.left.circle.fill")
+                                .font(.system(size: 13))
+                        }
+                        .foregroundStyle(VipleMailPalette.primary)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(VipleMailPalette.primary.opacity(0.10))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
 
                 HStack(spacing: 10) {
                     Image(systemName: "at")
@@ -284,6 +311,12 @@ public struct VipleMailAuthView: View {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(VipleMailPalette.surfaceSubtle)
                 )
+
+                HStack(spacing: 8) {
+                    loginDomainQuickPill(domain: "viplemail.fr", label: "@viplemail.fr", icon: "envelope.fill")
+                    loginDomainQuickPill(domain: "cenelis.com", label: "@cenelis.com • Agent Cenelis", icon: "checkmark.seal.fill")
+                    Spacer(minLength: 0)
+                }
             }
 
             VStack(alignment: .leading, spacing: 6) {
@@ -397,6 +430,16 @@ public struct VipleMailAuthView: View {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.surfaceSubtle))
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(VipleMailPalette.primary)
+                    Text("Agent habilité Groupe Cenelis ? Votre boîte professionnelle @cenelis.com vous est automatiquement proposée dès l'ouverture de l'application.")
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(VipleMailPalette.inkSecondary)
+                }
+                .padding(10)
+                .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(VipleMailPalette.primary.opacity(0.08)))
             }
 
             VStack(alignment: .leading, spacing: 5) {
@@ -589,6 +632,35 @@ public struct VipleMailAuthView: View {
                 .fill(Color.white.opacity(0.12))
                 .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.22), lineWidth: 1))
         )
+    }
+
+    private func loginDomainQuickPill(domain: String, label: String, icon: String) -> some View {
+        let currentLower = loginEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let isSelected = currentLower.hasSuffix("@\(domain)")
+        return Button {
+            let trimmed = loginEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+            let localPart = trimmed.split(separator: "@").first.map(String.init) ?? ""
+            if localPart.isEmpty {
+                loginEmail = "@\(domain)"
+            } else {
+                loginEmail = "\(localPart.lowercased())@\(domain)"
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 10.5, weight: .bold))
+                Text(label)
+                    .font(.system(size: 11.5, weight: .bold, design: .rounded))
+            }
+            .foregroundStyle(isSelected ? .white : VipleMailPalette.primary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                Capsule()
+                    .fill(isSelected ? VipleMailPalette.primary : VipleMailPalette.primary.opacity(0.10))
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private func errorAlertBanner(_ text: String) -> some View {

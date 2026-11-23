@@ -9,6 +9,8 @@ public struct MailSettingsView: View {
     @State private var displayNameField: String = ""
     @State private var personalMessageField: String = ""
     @State private var newImapPasswordField: String = ""
+    @State private var cenelisCustomHandleField: String = ""
+    @State private var isEditingCenelisHandle: Bool = false
     @State private var accountPendingDeletion: ExternalMailAccount? = nil
 
     public init() {}
@@ -17,6 +19,9 @@ public struct MailSettingsView: View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 18) {
                 accountProfileCard
+                if vm.isApprovedCenelisAgent {
+                    cenelisAgentMailboxCard
+                }
                 externalAccountsCard
                 notificationsControlCard
                 officialMailServersCard
@@ -52,6 +57,7 @@ public struct MailSettingsView: View {
         .onAppear {
             displayNameField = vm.currentUser?.displayName ?? ""
             personalMessageField = vm.currentUser?.personalMessage ?? ""
+            cenelisCustomHandleField = vm.suggestedCenelisLocalPart
             Task {
                 await notifManager.refreshAuthorizationStatus()
             }
@@ -76,7 +82,8 @@ public struct MailSettingsView: View {
                         Text(vm.currentUser?.displayName ?? vm.primaryHostedEmail)
                             .font(.system(size: 18, weight: .black, design: .rounded))
                             .foregroundStyle(VipleMailPalette.ink)
-                        if vm.primaryHostedEmail.lowercased().hasSuffix("@cenelis.com")
+                        if vm.isApprovedCenelisAgent
+                            || vm.primaryHostedEmail.lowercased().hasSuffix("@cenelis.com")
                             || vm.primaryHostedEmail.lowercased().hasSuffix("@viplenetwork.com") {
                             Image(systemName: "checkmark.seal.fill")
                                 .foregroundStyle(VipleMailPalette.primary)
@@ -141,17 +148,26 @@ public struct MailSettingsView: View {
 
                     ForEach(vm.hostedMailboxes, id: \.self) { mbx in
                         let isActive = !vm.isUnifiedInboxActive && mbx.lowercased() == vm.currentEmail.lowercased()
+                        let isCenelis = mbx.lowercased().hasSuffix("@cenelis.com")
                         Button {
                             Task {
                                 await vm.switchActiveMailbox(to: mbx)
                             }
                         } label: {
                             HStack(spacing: 10) {
-                                Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(isActive ? VipleMailPalette.primary : VipleMailPalette.inkMuted)
+                                Image(systemName: isActive ? "checkmark.circle.fill" : (isCenelis ? "checkmark.seal.fill" : "circle"))
+                                    .foregroundStyle((isActive || isCenelis) ? VipleMailPalette.primary : VipleMailPalette.inkMuted)
                                 Text(mbx)
                                     .font(.system(size: 13.5, weight: isActive ? .bold : .semibold, design: .monospaced))
                                     .foregroundStyle(isActive ? VipleMailPalette.primary : VipleMailPalette.ink)
+                                if isCenelis {
+                                    Text("CENELIS")
+                                        .font(.system(size: 9, weight: .black, design: .rounded))
+                                        .foregroundStyle(VipleMailPalette.primary)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Capsule().fill(VipleMailPalette.primary.opacity(0.12)))
+                                }
                                 Spacer()
                                 if isActive {
                                     Text("ACTIVE")
@@ -191,6 +207,196 @@ public struct MailSettingsView: View {
                     .padding(11)
                     .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.surfaceSubtle))
             }
+        }
+        .vipleMailCard(cornerRadius: 20, padding: 16)
+    }
+
+    // MARK: - Espace Agent Groupe Cenelis (Boîte Professionnelle Officielle @cenelis.com)
+
+    private var cenelisAgentMailboxCard: some View {
+        let cenAddr = vm.cenelisMailboxAddress
+        let displayAddr = cenAddr ?? "\(vm.suggestedCenelisLocalPart)@cenelis.com"
+        let isCurrentlyOpen = !vm.isUnifiedInboxActive && (cenAddr != nil) && vm.currentEmail.lowercased() == cenAddr?.lowercased()
+
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Label("Adresse officielle @cenelis.com", systemImage: "checkmark.seal.fill")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(VipleMailPalette.ink)
+
+                Spacer()
+
+                Text("AGENT CENELIS")
+                    .font(.system(size: 10, weight: .black, design: .rounded))
+                    .foregroundStyle(VipleMailPalette.primary)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 3.5)
+                    .background(Capsule().fill(VipleMailPalette.primary.opacity(0.12)))
+            }
+
+            Text("En tant qu'agent habilité du Groupe Cenelis, vous disposez de votre boîte professionnelle @cenelis.com certifiée (« Vérifiée : Cenelis SA ») et protégée par Cenelis MailRTE.")
+                .font(.system(size: 12.5))
+                .foregroundStyle(VipleMailPalette.inkSecondary)
+
+            HStack(spacing: 11) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(VipleMailPalette.primary.opacity(0.14))
+                        .frame(width: 40, height: 40)
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(VipleMailPalette.primary)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(displayAddr)
+                        .font(.system(size: 14, weight: .bold, design: .monospaced))
+                        .foregroundStyle(VipleMailPalette.ink)
+                        .lineLimit(1)
+                    Text(cenAddr != nil
+                         ? "Active sur Stalwart • Chiffrement Cenelis MailRTE"
+                         : "Prête à être activée sur votre compte")
+                        .font(.system(size: 11))
+                        .foregroundStyle(VipleMailPalette.inkMuted)
+                }
+
+                Spacer()
+
+                if isCurrentlyOpen {
+                    Text("OUVERTE")
+                        .font(.system(size: 9.5, weight: .black, design: .rounded))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(VipleMailPalette.primary))
+                }
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(VipleMailPalette.primary.opacity(0.07))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(VipleMailPalette.primary.opacity(0.30), lineWidth: 1)
+            )
+
+            if let activeCenelis = cenAddr {
+                HStack(spacing: 8) {
+                    Button {
+                        Task {
+                            vm.selectedTab = 0
+                            await vm.switchActiveMailbox(to: activeCenelis)
+                        }
+                    } label: {
+                        Label(isCurrentlyOpen ? "Aller à la boîte" : "Ouvrir @cenelis.com", systemImage: "tray.full.fill")
+                            .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                    .fill(VipleMailPalette.heroGradient)
+                            )
+                    }
+                    .disabled(vm.isSwitchingMailbox)
+
+                    Button {
+                        vm.presentComposer(.newMail(preferredFromMailbox: activeCenelis))
+                    } label: {
+                        Label("Écrire avec", systemImage: "square.and.pencil")
+                            .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                            .foregroundStyle(VipleMailPalette.primary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                    .fill(VipleMailPalette.primary.opacity(0.11))
+                            )
+                    }
+                }
+            } else {
+                Button {
+                    Task {
+                        _ = await vm.claimOrCustomizeCenelisMailbox(
+                            desiredLocalPart: cenelisCustomHandleField,
+                            switchImmediately: true
+                        )
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        if vm.isClaimingCenelisMailbox {
+                            ProgressView().tint(.white)
+                        } else {
+                            Image(systemName: "checkmark.seal.fill")
+                        }
+                        Text("Activer mon adresse \(displayAddr)")
+                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                    }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 13, style: .continuous)
+                            .fill(VipleMailPalette.heroGradient)
+                    )
+                }
+                .disabled(vm.isClaimingCenelisMailbox)
+            }
+
+            DisclosureGroup(
+                isExpanded: $isEditingCenelisHandle,
+                content: {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 0) {
+                            TextField("prenom.nom", text: $cenelisCustomHandleField)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .font(.system(size: 14, design: .monospaced))
+                                .padding(11)
+                            Text("@cenelis.com")
+                                .font(.system(size: 13, weight: .bold, design: .rounded))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 11)
+                                .background(VipleMailPalette.primary)
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                        .background(RoundedRectangle(cornerRadius: 11).fill(VipleMailPalette.surfaceSubtle))
+
+                        Button {
+                            Task {
+                                let ok = await vm.claimOrCustomizeCenelisMailbox(
+                                    desiredLocalPart: cenelisCustomHandleField,
+                                    switchImmediately: true
+                                )
+                                if ok {
+                                    isEditingCenelisHandle = false
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                if vm.isClaimingCenelisMailbox {
+                                    ProgressView().tint(.white).scaleEffect(0.8)
+                                }
+                                Text("Attribuer cet identifiant @cenelis.com")
+                                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                            }
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(RoundedRectangle(cornerRadius: 11).fill(VipleMailPalette.primary))
+                        }
+                        .disabled(vm.isClaimingCenelisMailbox)
+                    }
+                    .padding(.top, 8)
+                },
+                label: {
+                    Text("Personnaliser mon identifiant @cenelis.com")
+                        .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                        .foregroundStyle(VipleMailPalette.primary)
+                }
+            )
         }
         .vipleMailCard(cornerRadius: 20, padding: 16)
     }

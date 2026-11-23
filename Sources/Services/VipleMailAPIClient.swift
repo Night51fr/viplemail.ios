@@ -67,6 +67,7 @@ public final class VipleMailAPIClient {
            !idfv.isEmpty,
            idfv != "00000000-0000-0000-0000-000000000000" {
             UserDefaults(suiteName: "group.store.livria.shared")?.set(idfv, forKey: "viple.shared.deviceId")
+            UserDefaults(suiteName: "group.com.viplenetwork.shared")?.set(idfv, forKey: "viple.shared.deviceId")
             UserDefaults.standard.set(idfv, forKey: "viple.local.deviceId")
             return idfv
         }
@@ -74,6 +75,10 @@ public final class VipleMailAPIClient {
         if let shared = UserDefaults(suiteName: "group.store.livria.shared")?.string(forKey: "viple.shared.deviceId"),
            !shared.isEmpty {
             return shared
+        }
+        if let sharedCenelis = UserDefaults(suiteName: "group.com.viplenetwork.shared")?.string(forKey: "viple.shared.deviceId"),
+           !sharedCenelis.isEmpty {
+            return sharedCenelis
         }
         if let saved = UserDefaults.standard.string(forKey: "viple.local.deviceId"), !saved.isEmpty {
             return saved
@@ -83,12 +88,22 @@ public final class VipleMailAPIClient {
         return generated
     }
 
+    public func sharedCenelisWorkspaceEmail() -> String? {
+        if let raw = UserDefaults(suiteName: "group.com.viplenetwork.shared")?.string(forKey: "viple.shared.email")?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased(),
+           raw.contains("@") {
+            return raw
+        }
+        return nil
+    }
+
     private func applyDeviceHeaders(to req: inout URLRequest) async {
         req.setValue("Viple Mail", forHTTPHeaderField: "X-Viple-App-Name")
-        req.setValue("2026.11.7", forHTTPHeaderField: "X-Viple-Client-Version")
+        req.setValue("2026.11.8", forHTTPHeaderField: "X-Viple-Client-Version")
         req.setValue("1.0", forHTTPHeaderField: "X-Cenelis-MailRTE-Version")
         req.setValue(UUID().uuidString.lowercased(), forHTTPHeaderField: "X-Viple-Request-Id")
-        req.setValue("VipleMail-iOS/2026.11.7 (iPhone; iOS 18.0+; mail.viplemail.fr; MailRTE/1.0)", forHTTPHeaderField: "User-Agent")
+        req.setValue("VipleMail-iOS/2026.11.8 (iPhone; iOS 18.0+; mail.viplemail.fr; MailRTE/1.0)", forHTTPHeaderField: "User-Agent")
         let currentToken = authToken ?? ""
         if !currentToken.isEmpty {
             req.setValue("Bearer \(currentToken)", forHTTPHeaderField: "Authorization")
@@ -397,6 +412,31 @@ public final class VipleMailAPIClient {
         }
     }
 
+    public func claimCenelisMailbox(
+        desiredLocalPart: String? = nil,
+        switchActive: Bool = true,
+        ownerEmail: String? = nil,
+        cid: String? = nil
+    ) async throws -> VipleMailClaimCenelisResponse {
+        var body: [String: Any] = [
+            "switchActive": switchActive
+        ]
+        if let local = desiredLocalPart?.trimmingCharacters(in: .whitespacesAndNewlines), !local.isEmpty {
+            body["localPart"] = local
+        }
+        if let ownerEmail, !ownerEmail.isEmpty {
+            body["ownerEmail"] = ownerEmail
+        }
+        if let cid, !cid.isEmpty {
+            body["cid"] = cid
+        }
+        do {
+            return try await postJSON("/cenelis-mailbox/claim", body: body)
+        } catch {
+            return try await postJSON("/claim-cenelismail", body: body)
+        }
+    }
+
     public func updateImapPassword(password: String, email: String? = nil, cid: String? = nil) async throws -> String {
         var payload: [String: Any] = ["password": password]
         if let email, !email.isEmpty { payload["email"] = email }
@@ -631,7 +671,7 @@ public final class VipleMailAPIClient {
             "apnsToken": apnsToken ?? "",
             "apnsEnvironment": apnsEnv,
             "platform": "iOS",
-            "appVersion": "2026.11.7",
+            "appVersion": "2026.11.8",
             "notificationsEnabled": notificationsEnabled,
             "vipOnly": vipOnly
         ]
