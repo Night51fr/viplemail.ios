@@ -4,6 +4,7 @@ import SwiftUI
 
 public struct MailSettingsView: View {
     @EnvironmentObject private var vm: VipleMailViewModel
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var notifManager = VipleMailNotificationManager.shared
 
     @State private var displayNameField: String = ""
@@ -197,16 +198,26 @@ public struct MailSettingsView: View {
                 Text("Nom d'expéditeur affiché")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(VipleMailPalette.inkSecondary)
-                TextField("Votre nom complet", text: $displayNameField)
+                TextField(
+                    "Votre nom complet",
+                    text: $displayNameField,
+                    prompt: VipleMailPalette.prompt("Votre nom complet", scheme: colorScheme)
+                )
+                    .vipleMailTextInput()
                     .padding(11)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.surfaceSubtle))
+                    .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
 
                 Text("Statut Viple Live")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(VipleMailPalette.inkSecondary)
-                TextField("Votre message personnel Viple Live", text: $personalMessageField)
+                TextField(
+                    "Votre message personnel Viple Live",
+                    text: $personalMessageField,
+                    prompt: VipleMailPalette.prompt("Votre message personnel Viple Live", scheme: colorScheme)
+                )
+                    .vipleMailTextInput()
                     .padding(11)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.surfaceSubtle))
+                    .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
             }
         }
         .vipleMailCard(cornerRadius: 20, padding: 16)
@@ -350,7 +361,12 @@ public struct MailSettingsView: View {
                 content: {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(spacing: 0) {
-                            TextField("prenom.nom", text: $cenelisCustomHandleField)
+                            TextField(
+                                "prenom.nom",
+                                text: $cenelisCustomHandleField,
+                                prompt: VipleMailPalette.prompt("prenom.nom", scheme: colorScheme)
+                            )
+                                .vipleMailTextInput()
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
                                 .font(.system(size: 14, design: .monospaced))
@@ -363,7 +379,7 @@ public struct MailSettingsView: View {
                                 .background(VipleMailPalette.primary)
                         }
                         .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-                        .background(RoundedRectangle(cornerRadius: 11).fill(VipleMailPalette.surfaceSubtle))
+                        .background(RoundedRectangle(cornerRadius: 11).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
 
                         Button {
                             Task {
@@ -841,9 +857,14 @@ public struct MailSettingsView: View {
                     .foregroundStyle(VipleMailPalette.inkSecondary)
 
                 HStack(spacing: 8) {
-                    SecureField("Nouveau mot de passe (min. 8 car.)", text: $newImapPasswordField)
+                    SecureField(
+                        "Nouveau mot de passe (min. 8 car.)",
+                        text: $newImapPasswordField,
+                        prompt: VipleMailPalette.prompt("Nouveau mot de passe (min. 8 car.)", scheme: colorScheme)
+                    )
+                        .vipleMailTextInput()
                         .padding(10)
-                        .background(RoundedRectangle(cornerRadius: 10).fill(VipleMailPalette.surfaceSubtle))
+                        .background(RoundedRectangle(cornerRadius: 10).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
 
                     Button {
                         let pw = newImapPasswordField
@@ -945,13 +966,15 @@ public struct MailSettingsView: View {
                     .labelsHidden()
             }
 
-            TextEditor(text: $vm.settings.signatureHtml)
-                .font(.system(size: 13.5))
-                .foregroundStyle(VipleMailPalette.ink)
-                .frame(minHeight: 75)
-                .padding(8)
-                .scrollContentBackground(.hidden)
-                .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.surfaceSubtle))
+            VipleMailMultiLineEditor(
+                text: $vm.settings.signatureHtml,
+                placeholder: "Votre signature électronique Viple Mail…",
+                fontSize: 13.5,
+                minHeight: 75,
+                horizontalInset: 12,
+                verticalInset: 10
+            )
+            .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
         }
         .vipleMailCard(cornerRadius: 20, padding: 16)
     }
@@ -970,18 +993,24 @@ public struct MailSettingsView: View {
             }
 
             if vm.settings.vacationEnabled {
-                TextField("Objet de la réponse automatique", text: $vm.settings.vacationSubject)
-                    .foregroundStyle(VipleMailPalette.ink)
+                TextField(
+                    "Objet de la réponse automatique",
+                    text: $vm.settings.vacationSubject,
+                    prompt: VipleMailPalette.prompt("Objet de la réponse automatique", scheme: colorScheme)
+                )
+                    .vipleMailTextInput()
                     .padding(11)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.surfaceSubtle))
+                    .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
 
-                TextEditor(text: $vm.settings.vacationBody)
-                    .font(.system(size: 13.5))
-                    .foregroundStyle(VipleMailPalette.ink)
-                    .frame(minHeight: 80)
-                    .padding(8)
-                    .scrollContentBackground(.hidden)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.surfaceSubtle))
+                VipleMailMultiLineEditor(
+                    text: $vm.settings.vacationBody,
+                    placeholder: "Message envoyé automatiquement à vos correspondants pendant votre absence…",
+                    fontSize: 13.5,
+                    minHeight: 80,
+                    horizontalInset: 12,
+                    verticalInset: 10
+                )
+                .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
             }
 
             Button {
@@ -1014,6 +1043,7 @@ public struct MailSettingsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Serveur Viple Mail & SSO Viple Live ID")
                         .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .foregroundStyle(VipleMailPalette.ink)
                     Text(vm.lastDiagnosticsPing != nil
                          ? "Connecté : \(vm.lastDiagnosticsPing!.host) • \(vm.lastDiagnosticsPing!.version)"
                          : "Hôte : mail.viplemail.fr • IMAP 993 / SMTP 587 TLS")

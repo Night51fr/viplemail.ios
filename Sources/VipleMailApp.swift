@@ -33,6 +33,7 @@ public final class VipleMailAppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        UITextView.appearance().backgroundColor = .clear
         VipleMailNotificationManager.shared.configureOnLaunch()
         return true
     }

@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 
 public struct ComposeMailView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var vm: VipleMailViewModel
 
     public let mode: MailComposeMode
@@ -36,9 +37,10 @@ public struct ComposeMailView: View {
     @State private var contactPickerTarget: RecipientTarget = .to
 
     @FocusState private var focusedField: ComposeField?
+    @State private var isBodyFocused: Bool = false
 
     private enum ComposeField: Hashable {
-        case to, cc, bcc, subject, body
+        case to, cc, bcc, subject
     }
 
     private enum RecipientTarget {
@@ -201,11 +203,11 @@ public struct ComposeMailView: View {
                         }
                     }
                 }
-                .background(VipleMailPalette.surface)
+                .background(VipleMailPalette.resolvedSurface(for: colorScheme))
 
                 appleMailBottomToolbar
             }
-            .background(VipleMailPalette.surface.ignoresSafeArea())
+            .background(VipleMailPalette.resolvedSurface(for: colorScheme).ignoresSafeArea())
             .navigationTitle(headerTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -253,20 +255,30 @@ public struct ComposeMailView: View {
                 contactPickerSheet
             }
             .onAppear {
+                vm.applyWindowInterfaceStyle()
                 populateInitialFields()
                 includeSignature = vm.settings.signatureEnabled
                 syncChannelWithRecipient()
                 Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 250_000_000)
                     if toField.isEmpty {
+                        isBodyFocused = false
                         focusedField = .to
                     } else if isEffectiveChatMode {
-                        focusedField = .body
+                        focusedField = nil
+                        isBodyFocused = true
                     } else if subjectField.isEmpty {
+                        isBodyFocused = false
                         focusedField = .subject
                     } else {
-                        focusedField = .body
+                        focusedField = nil
+                        isBodyFocused = true
                     }
+                }
+            }
+            .onChange(of: focusedField) { _, newFocus in
+                if newFocus != nil {
+                    isBodyFocused = false
                 }
             }
             .onChange(of: toField) { _, _ in
@@ -325,8 +337,13 @@ public struct ComposeMailView: View {
                     .foregroundStyle(VipleMailPalette.inkSecondary)
                     .frame(width: 34, alignment: .leading)
 
-                TextField("destinataire@domaine.fr", text: $toField)
+                TextField(
+                    "destinataire@domaine.fr",
+                    text: $toField,
+                    prompt: VipleMailPalette.prompt("destinataire@domaine.fr", scheme: colorScheme)
+                )
                     .font(.system(size: 15))
+                    .vipleMailTextInput()
                     .textInputAutocapitalization(.never)
                     .keyboardType(.emailAddress)
                     .autocorrectionDisabled()
@@ -433,8 +450,13 @@ public struct ComposeMailView: View {
                             .foregroundStyle(VipleMailPalette.inkSecondary)
                             .frame(width: 44, alignment: .leading)
 
-                        TextField("Copie carbone", text: $ccField)
+                        TextField(
+                            "Copie carbone",
+                            text: $ccField,
+                            prompt: VipleMailPalette.prompt("Copie carbone", scheme: colorScheme)
+                        )
                             .font(.system(size: 15.5))
+                            .vipleMailTextInput()
                             .textInputAutocapitalization(.never)
                             .keyboardType(.emailAddress)
                             .autocorrectionDisabled()
@@ -461,8 +483,13 @@ public struct ComposeMailView: View {
                             .foregroundStyle(VipleMailPalette.inkSecondary)
                             .frame(width: 44, alignment: .leading)
 
-                        TextField("Copie carbone invisible", text: $bccField)
+                        TextField(
+                            "Copie carbone invisible",
+                            text: $bccField,
+                            prompt: VipleMailPalette.prompt("Copie carbone invisible", scheme: colorScheme)
+                        )
                             .font(.system(size: 15.5))
+                            .vipleMailTextInput()
                             .textInputAutocapitalization(.never)
                             .keyboardType(.emailAddress)
                             .autocorrectionDisabled()
@@ -589,8 +616,13 @@ public struct ComposeMailView: View {
                         .foregroundStyle(VipleMailPalette.inkSecondary)
                         .frame(width: 54, alignment: .leading)
 
-                    TextField("Objet du courrier", text: $subjectField)
+                    TextField(
+                        "Objet du courrier",
+                        text: $subjectField,
+                        prompt: VipleMailPalette.prompt("Objet du courrier", scheme: colorScheme)
+                    )
                         .font(.system(size: 15.5, weight: .semibold))
+                        .vipleMailTextInput()
                         .focused($focusedField, equals: .subject)
 
                     if priority != "Normal" && !isExpandedCcBccFrom {
@@ -849,25 +881,16 @@ public struct ComposeMailView: View {
     // MARK: - Corps du Message
 
     private var appleMailBodyEditor: some View {
-        ZStack(alignment: .topLeading) {
-            if bodyField.isEmpty {
-                Text(isEffectiveChatMode ? "Écrivez votre message instantané…" : "Rédigez votre courrier…")
-                    .font(.system(size: 16))
-                    .foregroundStyle(VipleMailPalette.inkMuted.opacity(0.65))
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 18)
-                    .allowsHitTesting(false)
-            }
-
-            TextEditor(text: $bodyField)
-                .font(.system(size: 16))
-                .foregroundStyle(VipleMailPalette.ink)
-                .focused($focusedField, equals: .body)
-                .frame(minHeight: 320)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .scrollContentBackground(.hidden)
-        }
+        VipleMailMultiLineEditor(
+            text: $bodyField,
+            placeholder: isEffectiveChatMode ? "Écrivez votre message instantané…" : "Rédigez votre courrier…",
+            fontSize: 16,
+            minHeight: 320,
+            horizontalInset: 18,
+            verticalInset: 16,
+            isFocused: $isBodyFocused
+        )
+        .background(VipleMailPalette.resolvedSurface(for: colorScheme))
     }
 
     // MARK: - Bloc Signature Automatique (Mail uniquement)
@@ -1076,7 +1099,8 @@ public struct ComposeMailView: View {
 
     private func insertAtEndOfBody(_ text: String) {
         bodyField += text
-        focusedField = .body
+        focusedField = nil
+        isBodyFocused = true
     }
 
     private func selectSuggestedContact(_ contact: VipleMailContact) {

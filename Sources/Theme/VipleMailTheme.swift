@@ -201,6 +201,47 @@ public enum VipleMailPalette {
         dark:  (0.494, 0.569, 0.682, 1.0)  // #7E91AE
     )
 
+    // Couleurs concrètes (non-dynamiques) résolues directement via SwiftUI ColorScheme
+    // pour garantir un contraste maximal dans 100 % des champs de saisie (TextField, SecureField, UITextView)
+    // sans jamais dépendre de l'héritage implicite UITraitCollection sous iOS 18-27+.
+    public static let lightInkSolid = Color(red: 0.051, green: 0.102, blue: 0.220)           // #0D1A38
+    public static let darkInkSolid = Color(red: 0.945, green: 0.965, blue: 0.992)            // #F1F6FD
+    public static let lightMutedSolid = Color(red: 0.455, green: 0.537, blue: 0.651)         // #7489A6
+    public static let darkMutedSolid = Color(red: 0.545, green: 0.624, blue: 0.741)          // #8B9FBD
+    public static let lightSurfaceSolid = Color(red: 1.000, green: 1.000, blue: 1.000)       // #FFFFFF
+    public static let darkSurfaceSolid = Color(red: 0.063, green: 0.090, blue: 0.149)        // #101726
+    public static let lightSurfaceSubtleSolid = Color(red: 0.922, green: 0.949, blue: 0.992) // #EBF2FD
+    public static let darkSurfaceSubtleSolid = Color(red: 0.098, green: 0.137, blue: 0.220)  // #192338
+    public static let darkPrimarySolid = Color(red: 0.165, green: 0.565, blue: 1.000)        // #2A90FF
+
+    public static func resolvedInk(for scheme: ColorScheme) -> Color {
+        scheme == .dark ? darkInkSolid : lightInkSolid
+    }
+
+    public static func resolvedMuted(for scheme: ColorScheme) -> Color {
+        scheme == .dark ? darkMutedSolid : lightMutedSolid
+    }
+
+    public static func resolvedSurface(for scheme: ColorScheme) -> Color {
+        scheme == .dark ? darkSurfaceSolid : lightSurfaceSolid
+    }
+
+    public static func resolvedSurfaceSubtle(for scheme: ColorScheme) -> Color {
+        scheme == .dark ? darkSurfaceSubtleSolid : lightSurfaceSubtleSolid
+    }
+
+    public static func resolvedCursorTint(for scheme: ColorScheme) -> Color {
+        scheme == .dark ? darkPrimarySolid : primarySolid
+    }
+
+    public static func prompt(_ placeholder: String) -> Text {
+        Text(placeholder).foregroundStyle(inkMuted)
+    }
+
+    public static func prompt(_ placeholder: String, scheme: ColorScheme) -> Text {
+        Text(placeholder).foregroundStyle(resolvedMuted(for: scheme))
+    }
+
     public static let heroGradient = LinearGradient(
         colors: [
             Color(red: 0.02, green: 0.16, blue: 0.48),
@@ -319,7 +360,197 @@ extension View {
     public func vipleMailCard(cornerRadius: CGFloat = 20, padding: CGFloat = 16) -> some View {
         modifier(VipleMailCardModifier(cornerRadius: cornerRadius, padding: padding))
     }
+
+    public func vipleMailTextInput() -> some View {
+        modifier(VipleMailTextInputModifier())
+    }
 }
+
+// MARK: - Modificateur & Éditeur Multiligne Haute Lisibilité (Zéro Texte Blanc sur Blanc Clair/Sombre iOS 18-27+)
+
+public struct VipleMailTextInputModifier: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+
+    public func body(content: Content) -> some View {
+        content
+            .foregroundStyle(VipleMailPalette.resolvedInk(for: colorScheme))
+            .tint(VipleMailPalette.resolvedCursorTint(for: colorScheme))
+            .environment(\.colorScheme, colorScheme)
+    }
+}
+
+public struct VipleMailMultiLineEditor: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @Binding public var text: String
+    public var placeholder: String
+    public var fontSize: CGFloat
+    public var minHeight: CGFloat
+    public var horizontalInset: CGFloat
+    public var verticalInset: CGFloat
+    public var isFocused: Binding<Bool>?
+
+    public init(
+        text: Binding<String>,
+        placeholder: String = "",
+        fontSize: CGFloat = 16,
+        minHeight: CGFloat = 120,
+        horizontalInset: CGFloat = 16,
+        verticalInset: CGFloat = 12,
+        isFocused: Binding<Bool>? = nil
+    ) {
+        self._text = text
+        self.placeholder = placeholder
+        self.fontSize = fontSize
+        self.minHeight = minHeight
+        self.horizontalInset = horizontalInset
+        self.verticalInset = verticalInset
+        self.isFocused = isFocused
+    }
+
+    public var body: some View {
+        ZStack(alignment: .topLeading) {
+            if text.isEmpty && !placeholder.isEmpty {
+                Text(placeholder)
+                    .font(.system(size: fontSize))
+                    .foregroundStyle(VipleMailPalette.resolvedMuted(for: colorScheme))
+                    .padding(.horizontal, horizontalInset)
+                    .padding(.vertical, verticalInset)
+                    .allowsHitTesting(false)
+            }
+
+            #if canImport(UIKit)
+            _VipleMailUITextViewRepresentable(
+                text: $text,
+                isDark: colorScheme == .dark,
+                fontSize: fontSize,
+                minHeight: minHeight,
+                horizontalInset: horizontalInset,
+                verticalInset: verticalInset,
+                isFocused: isFocused
+            )
+            .frame(minHeight: minHeight)
+            #else
+            TextEditor(text: $text)
+                .font(.system(size: fontSize))
+                .vipleMailTextInput()
+                .frame(minHeight: minHeight)
+            #endif
+        }
+    }
+}
+
+#if canImport(UIKit)
+private struct _VipleMailUITextViewRepresentable: UIViewRepresentable {
+    @Binding var text: String
+    let isDark: Bool
+    let fontSize: CGFloat
+    let minHeight: CGFloat
+    let horizontalInset: CGFloat
+    let verticalInset: CGFloat
+    let isFocused: Binding<Bool>?
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeUIView(context: Context) -> UITextView {
+        let tv = UITextView()
+        tv.delegate = context.coordinator
+        tv.isScrollEnabled = false
+        tv.backgroundColor = .clear
+        tv.isOpaque = false
+        tv.textContainerInset = UIEdgeInsets(
+            top: verticalInset,
+            left: horizontalInset,
+            bottom: verticalInset,
+            right: horizontalInset
+        )
+        tv.textContainer.lineFragmentPadding = 0
+        tv.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        tv.text = text
+        applyStyle(to: tv)
+        return tv
+    }
+
+    func updateUIView(_ uiView: UITextView, context: Context) {
+        context.coordinator.parent = self
+        if uiView.text != text {
+            context.coordinator.isUpdatingFromSwiftUI = true
+            uiView.text = text
+            context.coordinator.isUpdatingFromSwiftUI = false
+        }
+        applyStyle(to: uiView)
+
+        if let focusBinding = isFocused, focusBinding.wrappedValue, !uiView.isFirstResponder, uiView.window != nil {
+            Task { @MainActor [weak uiView] in
+                guard let uiView, uiView.window != nil, !uiView.isFirstResponder else { return }
+                uiView.becomeFirstResponder()
+            }
+        }
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
+        let targetWidth = proposal.width ?? max(220, uiView.window?.bounds.width ?? 340)
+        let fitting = uiView.sizeThatFits(CGSize(width: max(80, targetWidth), height: .greatestFiniteMagnitude))
+        return CGSize(width: targetWidth, height: max(minHeight, ceil(fitting.height)))
+    }
+
+    func applyStyle(to tv: UITextView) {
+        let uiFont = UIFont.systemFont(ofSize: fontSize)
+        let fgColor = isDark
+            ? UIColor(red: 0.945, green: 0.965, blue: 0.992, alpha: 1.0) // #F1F6FD sur fond sombre OLED
+            : UIColor(red: 0.051, green: 0.102, blue: 0.220, alpha: 1.0) // #0D1A38 sur fond clair
+        let caretColor = isDark
+            ? UIColor(red: 0.165, green: 0.565, blue: 1.000, alpha: 1.0) // #2A90FF
+            : UIColor(red: 0.000, green: 0.471, blue: 0.831, alpha: 1.0) // #0078D4
+
+        tv.overrideUserInterfaceStyle = isDark ? .dark : .light
+        tv.keyboardAppearance = isDark ? .dark : .light
+        tv.backgroundColor = .clear
+        tv.isOpaque = false
+        tv.font = uiFont
+        tv.textColor = fgColor
+        tv.tintColor = caretColor
+        tv.typingAttributes = [
+            .font: uiFont,
+            .foregroundColor: fgColor
+        ]
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var parent: _VipleMailUITextViewRepresentable
+        var isUpdatingFromSwiftUI = false
+
+        init(_ parent: _VipleMailUITextViewRepresentable) {
+            self.parent = parent
+        }
+
+        func textViewDidBeginEditing(_ textView: UITextView) {
+            parent.applyStyle(to: textView)
+            if parent.isFocused?.wrappedValue == false {
+                parent.isFocused?.wrappedValue = true
+            }
+        }
+
+        func textViewDidEndEditing(_ textView: UITextView) {
+            if parent.isFocused?.wrappedValue == true {
+                parent.isFocused?.wrappedValue = false
+            }
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            guard !isUpdatingFromSwiftUI else { return }
+            parent.applyStyle(to: textView)
+            let updated = textView.text ?? ""
+            if parent.text != updated {
+                parent.text = updated
+            }
+            textView.invalidateIntrinsicContentSize()
+        }
+    }
+}
+#endif
 
 // MARK: - Logo Horizontal « Viple Mail » (Signature Visuelle Haut-Gauche Adaptative)
 

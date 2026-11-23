@@ -29,6 +29,58 @@ private final class BGTaskBox: @unchecked Sendable {
     }
 }
 
+#if canImport(UIKit)
+/// Pont strictement `nonisolated` pour `BGTaskScheduler` (Swift 6 / iOS 18-27+).
+/// Garantit qu'aucune fermeture exécutée sur les files d'attente d'arrière-plan Apple (`com.apple.BGTaskScheduler`)
+/// n'hérite d'une assertion d'isolation `@MainActor` (`_swift_task_checkIsolatedSwift` / `_dispatch_assert_queue_fail`).
+private enum VipleMailBackgroundRuntime {
+    static let refreshIdentifier = "com.viplenetwork.viplemail.refresh"
+    static let processingIdentifier = "com.viplenetwork.viplemail.processing"
+
+    static func scheduleAll() {
+        let refreshReq = BGAppRefreshTaskRequest(identifier: refreshIdentifier)
+        refreshReq.earliestBeginDate = Date(timeIntervalSinceNow: 60)
+        try? BGTaskScheduler.shared.submit(refreshReq)
+
+        let procReq = BGProcessingTaskRequest(identifier: processingIdentifier)
+        procReq.requiresNetworkConnectivity = true
+        procReq.requiresExternalPower = false
+        procReq.earliestBeginDate = Date(timeIntervalSinceNow: 180)
+        try? BGTaskScheduler.shared.submit(procReq)
+    }
+
+    static func registerAll() {
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: refreshIdentifier, using: nil) { task in
+            let box = BGTaskBox { ok in task.setTaskCompleted(success: ok) }
+            scheduleAll()
+            let work = Task { @MainActor in
+                let ok = await VipleMailNotificationManager.shared.performNotificationPollCycle(isBackground: true)
+                box.complete(ok)
+            }
+            task.expirationHandler = {
+                work.cancel()
+                scheduleAll()
+                box.complete(false)
+            }
+        }
+
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: processingIdentifier, using: nil) { task in
+            let box = BGTaskBox { ok in task.setTaskCompleted(success: ok) }
+            scheduleAll()
+            let work = Task { @MainActor in
+                let ok = await VipleMailNotificationManager.shared.performNotificationPollCycle(isBackground: true)
+                box.complete(ok)
+            }
+            task.expirationHandler = {
+                work.cancel()
+                scheduleAll()
+                box.complete(false)
+            }
+        }
+    }
+}
+#endif
+
 @MainActor
 public final class VipleMailNotificationManager: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     public static let shared = VipleMailNotificationManager()
@@ -280,9 +332,15 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
         let app = UIApplication.shared
         var bgId: UIBackgroundTaskIdentifier = .invalid
         bgId = app.beginBackgroundTask(withName: "com.viplenetwork.viplemail.bg-sync") { [weak self] in
-            Task { @MainActor in
-                self?.scheduleBackgroundTasks()
-                self?.endBackgroundGraceExecution()
+            VipleMailBackgroundRuntime.scheduleAll()
+            if Thread.isMainThread {
+                MainActor.assumeIsolated {
+                    self?.endBackgroundGraceExecution()
+                }
+            } else {
+                Task { @MainActor in
+                    self?.endBackgroundGraceExecution()
+                }
             }
         }
         guard bgId != .invalid else { return }
@@ -331,51 +389,13 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
         didRegisterBackgroundTasks = true
 
         #if canImport(UIKit)
-        BGTaskScheduler.shared.register(forTaskWithIdentifier: Self.refreshTaskIdentifier, using: nil) { task in
-            let box = BGTaskBox { ok in task.setTaskCompleted(success: ok) }
-            let work = Task { @MainActor in
-                VipleMailNotificationManager.shared.scheduleBackgroundTasks()
-                let ok = await VipleMailNotificationManager.shared.performNotificationPollCycle(isBackground: true)
-                box.complete(ok)
-            }
-            task.expirationHandler = {
-                work.cancel()
-                Task { @MainActor in
-                    VipleMailNotificationManager.shared.scheduleBackgroundTasks()
-                }
-                box.complete(false)
-            }
-        }
-
-        BGTaskScheduler.shared.register(forTaskWithIdentifier: Self.processingTaskIdentifier, using: nil) { task in
-            let box = BGTaskBox { ok in task.setTaskCompleted(success: ok) }
-            let work = Task { @MainActor in
-                VipleMailNotificationManager.shared.scheduleBackgroundTasks()
-                let ok = await VipleMailNotificationManager.shared.performNotificationPollCycle(isBackground: true)
-                box.complete(ok)
-            }
-            task.expirationHandler = {
-                work.cancel()
-                Task { @MainActor in
-                    VipleMailNotificationManager.shared.scheduleBackgroundTasks()
-                }
-                box.complete(false)
-            }
-        }
+        VipleMailBackgroundRuntime.registerAll()
         #endif
     }
 
-    public func scheduleBackgroundTasks() {
+    nonisolated public func scheduleBackgroundTasks() {
         #if canImport(UIKit)
-        let refreshReq = BGAppRefreshTaskRequest(identifier: Self.refreshTaskIdentifier)
-        refreshReq.earliestBeginDate = Date(timeIntervalSinceNow: 60) // Autorise iOS à réveiller Viple Mail dès 60s
-        try? BGTaskScheduler.shared.submit(refreshReq)
-
-        let procReq = BGProcessingTaskRequest(identifier: Self.processingTaskIdentifier)
-        procReq.requiresNetworkConnectivity = true
-        procReq.requiresExternalPower = false
-        procReq.earliestBeginDate = Date(timeIntervalSinceNow: 180)
-        try? BGTaskScheduler.shared.submit(procReq)
+        VipleMailBackgroundRuntime.scheduleAll()
         #endif
     }
 

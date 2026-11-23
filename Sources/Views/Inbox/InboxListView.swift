@@ -159,8 +159,13 @@ public struct InboxListView: View {
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(VipleMailPalette.primary)
-                TextField("Rechercher par objet, expéditeur, contenu...", text: $vm.searchQuery)
+                TextField(
+                    "Rechercher par objet, expéditeur, contenu...",
+                    text: $vm.searchQuery,
+                    prompt: VipleMailPalette.prompt("Rechercher par objet, expéditeur, contenu...", scheme: colorScheme)
+                )
                     .font(.system(size: 14.5))
+                    .vipleMailTextInput()
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                 if !vm.searchQuery.isEmpty {
@@ -176,7 +181,7 @@ public struct InboxListView: View {
             .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(VipleMailPalette.surfaceSubtle)
+                    .fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme))
             )
 
             // Onglets Prioritaire / Autres (Focused Inbox)

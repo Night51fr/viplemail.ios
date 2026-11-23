@@ -4,6 +4,7 @@ import SwiftUI
 
 public struct MailContactsView: View {
     @EnvironmentObject private var vm: VipleMailViewModel
+    @Environment(\.colorScheme) private var colorScheme
     @State private var searchText: String = ""
     @State private var vipOnlyFilter: Bool = false
 
@@ -90,12 +91,17 @@ public struct MailContactsView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(VipleMailPalette.primary)
-                    TextField("Rechercher un contact...", text: $searchText)
+                    TextField(
+                        "Rechercher un contact...",
+                        text: $searchText,
+                        prompt: VipleMailPalette.prompt("Rechercher un contact...", scheme: colorScheme)
+                    )
                         .font(.system(size: 14))
+                        .vipleMailTextInput()
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 9)
-                .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.surfaceSubtle))
+                .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
 
                 Button {
                     withAnimation {
@@ -279,24 +285,46 @@ public struct MailContactsView: View {
         NavigationStack {
             Form {
                 Section("Identité & Adresse e-mail") {
-                    TextField("Nom complet", text: $contactName)
-                    TextField("Adresse e-mail (ex: nom@viplemail.fr ou agent@cenelis.com)", text: $contactEmail)
+                    TextField("Nom complet", text: $contactName, prompt: VipleMailPalette.prompt("Nom complet", scheme: colorScheme))
+                        .vipleMailTextInput()
+                    TextField(
+                        "Adresse e-mail (ex: nom@viplemail.fr ou agent@cenelis.com)",
+                        text: $contactEmail,
+                        prompt: VipleMailPalette.prompt("Adresse e-mail (ex: nom@viplemail.fr ou agent@cenelis.com)", scheme: colorScheme)
+                    )
+                        .vipleMailTextInput()
                         .textInputAutocapitalization(.never)
                         .keyboardType(.emailAddress)
                         .autocorrectionDisabled()
                     Toggle(isOn: $contactIsVip) {
                         Label("Contact VIP (Prioritaire 👑)", systemImage: "crown.fill")
+                            .foregroundStyle(VipleMailPalette.ink)
                     }
                 }
+                .listRowBackground(VipleMailPalette.resolvedSurface(for: colorScheme))
 
                 Section("Informations professionnelles & Groupe") {
-                    TextField("Groupe (ex: Famille, Équipe Viple, Amis)", text: $contactGroup)
-                    TextField("Téléphone", text: $contactPhone)
+                    TextField(
+                        "Groupe (ex: Famille, Équipe Viple, Amis)",
+                        text: $contactGroup,
+                        prompt: VipleMailPalette.prompt("Groupe (ex: Famille, Équipe Viple, Amis)", scheme: colorScheme)
+                    )
+                        .vipleMailTextInput()
+                    TextField("Téléphone", text: $contactPhone, prompt: VipleMailPalette.prompt("Téléphone", scheme: colorScheme))
+                        .vipleMailTextInput()
                         .keyboardType(.phonePad)
-                    TextField("Société / Organisation", text: $contactCompany)
-                    TextField("Fonction", text: $contactJobTitle)
-                    TextField("Notes", text: $contactNotes)
+                    TextField(
+                        "Société / Organisation",
+                        text: $contactCompany,
+                        prompt: VipleMailPalette.prompt("Société / Organisation", scheme: colorScheme)
+                    )
+                        .vipleMailTextInput()
+                    TextField("Fonction", text: $contactJobTitle, prompt: VipleMailPalette.prompt("Fonction", scheme: colorScheme))
+                        .vipleMailTextInput()
+                    TextField("Notes", text: $contactNotes, prompt: VipleMailPalette.prompt("Notes", scheme: colorScheme))
+                        .vipleMailTextInput()
                 }
+                .listRowBackground(VipleMailPalette.resolvedSurface(for: colorScheme))
             }
             .scrollContentBackground(.hidden)
             .background(VipleMailPalette.background)

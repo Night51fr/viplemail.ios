@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 
 public struct MailChatView: View {
     @EnvironmentObject private var vm: VipleMailViewModel
+    @Environment(\.colorScheme) private var colorScheme
     @State private var searchQuery: String = ""
     @State private var isShowingNewChatSheet: Bool = false
     @State private var newChatAddress: String = ""
@@ -121,8 +122,13 @@ public struct MailChatView: View {
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(VipleMailPalette.primary)
-                TextField("Rechercher une discussion Viple / Cenelis…", text: $searchQuery)
+                TextField(
+                    "Rechercher une discussion Viple / Cenelis…",
+                    text: $searchQuery,
+                    prompt: VipleMailPalette.prompt("Rechercher une discussion Viple / Cenelis…", scheme: colorScheme)
+                )
                     .font(.system(size: 14.5))
+                    .vipleMailTextInput()
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                 if !searchQuery.isEmpty {
@@ -138,7 +144,7 @@ public struct MailChatView: View {
             .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(VipleMailPalette.surfaceSubtle)
+                    .fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme))
             )
         }
         .padding(.horizontal, 16)
@@ -286,13 +292,18 @@ public struct MailChatView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "at")
                         .foregroundStyle(VipleMailPalette.primary)
-                    TextField("identifiant, nom@viplemail.fr ou agent@cenelis.com", text: $newChatAddress)
+                    TextField(
+                        "identifiant, nom@viplemail.fr ou agent@cenelis.com",
+                        text: $newChatAddress,
+                        prompt: VipleMailPalette.prompt("identifiant, nom@viplemail.fr ou agent@cenelis.com", scheme: colorScheme)
+                    )
+                        .vipleMailTextInput()
                         .textInputAutocapitalization(.never)
                         .keyboardType(.emailAddress)
                         .autocorrectionDisabled()
                 }
                 .padding(13)
-                .background(RoundedRectangle(cornerRadius: 13).fill(VipleMailPalette.surface))
+                .background(RoundedRectangle(cornerRadius: 13).fill(VipleMailPalette.resolvedSurface(for: colorScheme)))
                 .overlay(RoundedRectangle(cornerRadius: 13).stroke(VipleMailPalette.border, lineWidth: 1))
 
                 HStack(spacing: 8) {
@@ -412,6 +423,7 @@ public struct MailChatView: View {
 
 public struct MailChatConversationView: View {
     @EnvironmentObject private var vm: VipleMailViewModel
+    @Environment(\.colorScheme) private var colorScheme
     public let session: VipleChatSession
 
     @State private var draftText: String = ""
@@ -741,15 +753,20 @@ public struct MailChatConversationView: View {
             }
             .padding(.bottom, 2)
 
-            TextField("Message instantané…", text: $draftText, axis: .vertical)
+            TextField(
+                "Message instantané…",
+                text: $draftText,
+                prompt: VipleMailPalette.prompt("Message instantané…", scheme: colorScheme),
+                axis: .vertical
+            )
                 .font(.system(size: 15.5))
-                .foregroundStyle(VipleMailPalette.ink)
+                .vipleMailTextInput()
                 .lineLimit(1...5)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
                 .background(
                     RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .fill(VipleMailPalette.surfaceSubtle)
+                        .fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme))
                 )
 
             Button {

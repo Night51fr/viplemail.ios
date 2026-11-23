@@ -4,6 +4,7 @@ import SwiftUI
 
 public struct AddExternalAccountSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var vm: VipleMailViewModel
 
     private struct QuickProviderPreset: Identifiable {
@@ -266,13 +267,18 @@ public struct AddExternalAccountSheet: View {
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(VipleMailPalette.inkSecondary)
 
-                TextField("prenom.nom@gmail.com", text: $emailField)
+                TextField(
+                    "prenom.nom@gmail.com",
+                    text: $emailField,
+                    prompt: VipleMailPalette.prompt("prenom.nom@gmail.com", scheme: colorScheme)
+                )
+                    .vipleMailTextInput()
                     .keyboardType(.emailAddress)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .disabled(isEditingExisting)
                     .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.surfaceSubtle))
+                    .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
             }
 
             VStack(alignment: .leading, spacing: 6) {
@@ -280,11 +286,16 @@ public struct AddExternalAccountSheet: View {
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(VipleMailPalette.inkSecondary)
 
-                SecureField(isEditingExisting ? "••••••••••••" : "Mot de passe de la boîte mail", text: $passwordField)
+                SecureField(
+                    isEditingExisting ? "••••••••••••" : "Mot de passe de la boîte mail",
+                    text: $passwordField,
+                    prompt: VipleMailPalette.prompt(isEditingExisting ? "••••••••••••" : "Mot de passe de la boîte mail", scheme: colorScheme)
+                )
+                    .vipleMailTextInput()
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.surfaceSubtle))
+                    .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
             }
 
             VStack(alignment: .leading, spacing: 6) {
@@ -292,9 +303,14 @@ public struct AddExternalAccountSheet: View {
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(VipleMailPalette.inkSecondary)
 
-                TextField("Votre nom complet", text: $displayNameField)
+                TextField(
+                    "Votre nom complet",
+                    text: $displayNameField,
+                    prompt: VipleMailPalette.prompt("Votre nom complet", scheme: colorScheme)
+                )
+                    .vipleMailTextInput()
                     .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.surfaceSubtle))
+                    .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
             }
         }
         .vipleMailCard(cornerRadius: 20, padding: 16)
@@ -369,18 +385,20 @@ public struct AddExternalAccountSheet: View {
                         .foregroundStyle(VipleMailPalette.primary)
 
                     HStack(spacing: 8) {
-                        TextField("imap.domaine.fr", text: $imapHost)
+                        TextField("imap.domaine.fr", text: $imapHost, prompt: VipleMailPalette.prompt("imap.domaine.fr", scheme: colorScheme))
+                            .vipleMailTextInput()
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .onChange(of: imapHost) { _, _ in hasCustomizedServersManually = true }
                             .padding(10)
-                            .background(RoundedRectangle(cornerRadius: 10).fill(VipleMailPalette.surfaceSubtle))
+                            .background(RoundedRectangle(cornerRadius: 10).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
 
-                        TextField("993", text: $imapPortText)
+                        TextField("993", text: $imapPortText, prompt: VipleMailPalette.prompt("993", scheme: colorScheme))
+                            .vipleMailTextInput()
                             .keyboardType(.numberPad)
                             .frame(width: 70)
                             .padding(10)
-                            .background(RoundedRectangle(cornerRadius: 10).fill(VipleMailPalette.surfaceSubtle))
+                            .background(RoundedRectangle(cornerRadius: 10).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
                     }
 
                     Picker("Sécurité IMAP", selection: $imapSecurity) {
@@ -393,11 +411,16 @@ public struct AddExternalAccountSheet: View {
                         if newSec == "starttls" && imapPortText == "993" { imapPortText = "143" }
                     }
 
-                    TextField("Identifiant IMAP (par défaut l'adresse e-mail)", text: $imapUsername)
+                    TextField(
+                        "Identifiant IMAP (par défaut l'adresse e-mail)",
+                        text: $imapUsername,
+                        prompt: VipleMailPalette.prompt("Identifiant IMAP (par défaut l'adresse e-mail)", scheme: colorScheme)
+                    )
+                        .vipleMailTextInput()
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .padding(10)
-                        .background(RoundedRectangle(cornerRadius: 10).fill(VipleMailPalette.surfaceSubtle))
+                        .background(RoundedRectangle(cornerRadius: 10).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
 
                     if canSendSmtp {
                         Divider()
@@ -407,18 +430,20 @@ public struct AddExternalAccountSheet: View {
                             .foregroundStyle(VipleMailPalette.primary)
 
                         HStack(spacing: 8) {
-                            TextField("smtp.domaine.fr", text: $smtpHost)
+                            TextField("smtp.domaine.fr", text: $smtpHost, prompt: VipleMailPalette.prompt("smtp.domaine.fr", scheme: colorScheme))
+                                .vipleMailTextInput()
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
                                 .onChange(of: smtpHost) { _, _ in hasCustomizedServersManually = true }
                                 .padding(10)
-                                .background(RoundedRectangle(cornerRadius: 10).fill(VipleMailPalette.surfaceSubtle))
+                                .background(RoundedRectangle(cornerRadius: 10).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
 
-                            TextField("587", text: $smtpPortText)
+                            TextField("587", text: $smtpPortText, prompt: VipleMailPalette.prompt("587", scheme: colorScheme))
+                                .vipleMailTextInput()
                                 .keyboardType(.numberPad)
                                 .frame(width: 70)
                                 .padding(10)
-                                .background(RoundedRectangle(cornerRadius: 10).fill(VipleMailPalette.surfaceSubtle))
+                                .background(RoundedRectangle(cornerRadius: 10).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
                         }
 
                         Picker("Sécurité SMTP", selection: $smtpSecurity) {
@@ -431,17 +456,27 @@ public struct AddExternalAccountSheet: View {
                             if newSec == "starttls" && smtpPortText == "465" { smtpPortText = "587" }
                         }
 
-                        TextField("Identifiant SMTP (optionnel)", text: $smtpUsername)
+                        TextField(
+                            "Identifiant SMTP (optionnel)",
+                            text: $smtpUsername,
+                            prompt: VipleMailPalette.prompt("Identifiant SMTP (optionnel)", scheme: colorScheme)
+                        )
+                            .vipleMailTextInput()
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .padding(10)
-                            .background(RoundedRectangle(cornerRadius: 10).fill(VipleMailPalette.surfaceSubtle))
+                            .background(RoundedRectangle(cornerRadius: 10).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
 
-                        SecureField("Mot de passe SMTP distinct (optionnel)", text: $smtpPassword)
+                        SecureField(
+                            "Mot de passe SMTP distinct (optionnel)",
+                            text: $smtpPassword,
+                            prompt: VipleMailPalette.prompt("Mot de passe SMTP distinct (optionnel)", scheme: colorScheme)
+                        )
+                            .vipleMailTextInput()
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .padding(10)
-                            .background(RoundedRectangle(cornerRadius: 10).fill(VipleMailPalette.surfaceSubtle))
+                            .background(RoundedRectangle(cornerRadius: 10).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
                     }
                 }
             }

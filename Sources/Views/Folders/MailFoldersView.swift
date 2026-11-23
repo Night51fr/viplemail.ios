@@ -4,6 +4,7 @@ import SwiftUI
 
 public struct MailFoldersView: View {
     @EnvironmentObject private var vm: VipleMailViewModel
+    @Environment(\.colorScheme) private var colorScheme
     @State private var newFolderName: String = ""
 
     public init() {}
@@ -366,9 +367,14 @@ public struct MailFoldersView: View {
                     .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(VipleMailPalette.inkSecondary)
 
-                TextField("Ex : Factures Viple, Projets 2026...", text: $newFolderName)
+                TextField(
+                    "Ex : Factures Viple, Projets 2026...",
+                    text: $newFolderName,
+                    prompt: VipleMailPalette.prompt("Ex : Factures Viple, Projets 2026...", scheme: colorScheme)
+                )
+                    .vipleMailTextInput()
                     .padding(14)
-                    .background(RoundedRectangle(cornerRadius: 14).fill(VipleMailPalette.surface))
+                    .background(RoundedRectangle(cornerRadius: 14).fill(VipleMailPalette.resolvedSurface(for: colorScheme)))
                     .overlay(RoundedRectangle(cornerRadius: 14).stroke(VipleMailPalette.border, lineWidth: 1))
 
                 Button {

@@ -295,7 +295,12 @@ public struct VipleMailAuthView: View {
                 HStack(spacing: 10) {
                     Image(systemName: "at")
                         .foregroundStyle(VipleMailPalette.primary)
-                    TextField("ex: prenom@viplemail.fr ou agent@cenelis.com", text: $loginEmail)
+                    TextField(
+                        "ex: prenom@viplemail.fr ou agent@cenelis.com",
+                        text: $loginEmail,
+                        prompt: VipleMailPalette.prompt("ex: prenom@viplemail.fr ou agent@cenelis.com", scheme: colorScheme)
+                    )
+                        .vipleMailTextInput()
                         .textInputAutocapitalization(.never)
                         .keyboardType(.emailAddress)
                         .autocorrectionDisabled()
@@ -303,7 +308,7 @@ public struct VipleMailAuthView: View {
                 .padding(13)
                 .background(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(VipleMailPalette.surfaceSubtle)
+                        .fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme))
                 )
 
                 HStack(spacing: 8) {
@@ -321,12 +326,17 @@ public struct VipleMailAuthView: View {
                 HStack(spacing: 10) {
                     Image(systemName: "key.fill")
                         .foregroundStyle(VipleMailPalette.primary)
-                    SecureField("Votre mot de passe", text: $loginPassword)
+                    SecureField(
+                        "Votre mot de passe",
+                        text: $loginPassword,
+                        prompt: VipleMailPalette.prompt("Votre mot de passe", scheme: colorScheme)
+                    )
+                        .vipleMailTextInput()
                 }
                 .padding(13)
                 .background(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(VipleMailPalette.surfaceSubtle)
+                        .fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme))
                 )
             }
 
@@ -382,17 +392,19 @@ public struct VipleMailAuthView: View {
                     Text("Prénom")
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(VipleMailPalette.inkSecondary)
-                    TextField("Prénom", text: $firstName)
+                    TextField("Prénom", text: $firstName, prompt: VipleMailPalette.prompt("Prénom", scheme: colorScheme))
+                        .vipleMailTextInput()
                         .padding(12)
-                        .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.surfaceSubtle))
+                        .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
                 }
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Nom")
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(VipleMailPalette.inkSecondary)
-                    TextField("Nom", text: $lastName)
+                    TextField("Nom", text: $lastName, prompt: VipleMailPalette.prompt("Nom", scheme: colorScheme))
+                        .vipleMailTextInput()
                         .padding(12)
-                        .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.surfaceSubtle))
+                        .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
                 }
             }
 
@@ -400,9 +412,10 @@ public struct VipleMailAuthView: View {
                 Text("Nom affiché dans vos courriers")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(VipleMailPalette.inkSecondary)
-                TextField("Ex : Marie Dupont", text: $displayName)
+                TextField("Ex : Marie Dupont", text: $displayName, prompt: VipleMailPalette.prompt("Ex : Marie Dupont", scheme: colorScheme))
+                    .vipleMailTextInput()
                     .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.surfaceSubtle))
+                    .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
             }
 
             VStack(alignment: .leading, spacing: 5) {
@@ -411,7 +424,8 @@ public struct VipleMailAuthView: View {
                     .foregroundStyle(VipleMailPalette.inkSecondary)
 
                 HStack(spacing: 0) {
-                    TextField("identifiant", text: $viplemailLocalUser)
+                    TextField("identifiant", text: $viplemailLocalUser, prompt: VipleMailPalette.prompt("identifiant", scheme: colorScheme))
+                        .vipleMailTextInput()
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .padding(12)
@@ -423,7 +437,7 @@ public struct VipleMailAuthView: View {
                         .background(VipleMailPalette.primary)
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.surfaceSubtle))
+                .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
                 HStack(spacing: 8) {
                     Image(systemName: "checkmark.seal.fill")
                         .font(.system(size: 13, weight: .bold))
@@ -440,18 +454,24 @@ public struct VipleMailAuthView: View {
                 Text("Mot de passe (minimum 6 caractères)")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(VipleMailPalette.inkSecondary)
-                SecureField("Mot de passe", text: $signupPassword)
+                SecureField("Mot de passe", text: $signupPassword, prompt: VipleMailPalette.prompt("Mot de passe", scheme: colorScheme))
+                    .vipleMailTextInput()
                     .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.surfaceSubtle))
+                    .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
             }
 
             VStack(alignment: .leading, spacing: 5) {
                 Text("Confirmer le mot de passe")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(VipleMailPalette.inkSecondary)
-                SecureField("Confirmer le mot de passe", text: $signupConfirmPassword)
+                SecureField(
+                    "Confirmer le mot de passe",
+                    text: $signupConfirmPassword,
+                    prompt: VipleMailPalette.prompt("Confirmer le mot de passe", scheme: colorScheme)
+                )
+                    .vipleMailTextInput()
                     .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.surfaceSubtle))
+                    .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
             }
 
             Button {
@@ -532,15 +552,25 @@ public struct VipleMailAuthView: View {
             }
 
             if appleLinkExistingMode {
-                TextField("Adresse @viplemail.fr ou @cenelis.com existante", text: $appleExistingEmail)
+                TextField(
+                    "Adresse @viplemail.fr ou @cenelis.com existante",
+                    text: $appleExistingEmail,
+                    prompt: VipleMailPalette.prompt("Adresse @viplemail.fr ou @cenelis.com existante", scheme: colorScheme)
+                )
+                    .vipleMailTextInput()
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.surfaceSubtle))
+                    .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
 
-                SecureField("Mot de passe Viple Live ID", text: $appleExistingPassword)
+                SecureField(
+                    "Mot de passe Viple Live ID",
+                    text: $appleExistingPassword,
+                    prompt: VipleMailPalette.prompt("Mot de passe Viple Live ID", scheme: colorScheme)
+                )
+                    .vipleMailTextInput()
                     .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.surfaceSubtle))
+                    .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
 
                 Button {
                     Task {
@@ -556,20 +586,24 @@ public struct VipleMailAuthView: View {
                 }
             } else {
                 HStack(spacing: 10) {
-                    TextField("Prénom", text: $appleFirstName)
+                    TextField("Prénom", text: $appleFirstName, prompt: VipleMailPalette.prompt("Prénom", scheme: colorScheme))
+                        .vipleMailTextInput()
                         .padding(12)
-                        .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.surfaceSubtle))
-                    TextField("Nom", text: $appleLastName)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
+                    TextField("Nom", text: $appleLastName, prompt: VipleMailPalette.prompt("Nom", scheme: colorScheme))
+                        .vipleMailTextInput()
                         .padding(12)
-                        .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.surfaceSubtle))
+                        .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
                 }
 
-                TextField("Nom affiché", text: $appleDisplayName)
+                TextField("Nom affiché", text: $appleDisplayName, prompt: VipleMailPalette.prompt("Nom affiché", scheme: colorScheme))
+                    .vipleMailTextInput()
                     .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.surfaceSubtle))
+                    .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
 
                 HStack(spacing: 0) {
-                    TextField("votre.nom", text: $appleViplemailUser)
+                    TextField("votre.nom", text: $appleViplemailUser, prompt: VipleMailPalette.prompt("votre.nom", scheme: colorScheme))
+                        .vipleMailTextInput()
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .padding(12)
@@ -581,7 +615,7 @@ public struct VipleMailAuthView: View {
                         .background(VipleMailPalette.primary)
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 12))
-                .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.surfaceSubtle))
+                .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
 
                 Button {
                     Task {
