@@ -85,10 +85,10 @@ public final class VipleMailAPIClient {
 
     private func applyDeviceHeaders(to req: inout URLRequest) async {
         req.setValue("Viple Mail", forHTTPHeaderField: "X-Viple-App-Name")
-        req.setValue("2026.11.6", forHTTPHeaderField: "X-Viple-Client-Version")
+        req.setValue("2026.11.7", forHTTPHeaderField: "X-Viple-Client-Version")
         req.setValue("1.0", forHTTPHeaderField: "X-Cenelis-MailRTE-Version")
         req.setValue(UUID().uuidString.lowercased(), forHTTPHeaderField: "X-Viple-Request-Id")
-        req.setValue("VipleMail-iOS/2026.11.6 (iPhone; iOS 18.0+; mail.viplemail.fr; MailRTE/1.0)", forHTTPHeaderField: "User-Agent")
+        req.setValue("VipleMail-iOS/2026.11.7 (iPhone; iOS 18.0+; mail.viplemail.fr; MailRTE/1.0)", forHTTPHeaderField: "User-Agent")
         let currentToken = authToken ?? ""
         if !currentToken.isEmpty {
             req.setValue("Bearer \(currentToken)", forHTTPHeaderField: "Authorization")
@@ -592,10 +592,16 @@ public final class VipleMailAPIClient {
 
     // MARK: - 4. Notifications Push, Sondage Rapide IMAP & Enregistrement d'Appareil iOS
 
-    public func pollNotifications(email: String, cid: String?, limit: Int = 15) async throws -> VipleMailNotificationPollResponse {
+    public func pollNotifications(
+        email: String,
+        cid: String?,
+        limit: Int = 15,
+        allMailboxes: Bool = true
+    ) async throws -> VipleMailNotificationPollResponse {
         var items: [URLQueryItem] = [
             URLQueryItem(name: "email", value: email),
-            URLQueryItem(name: "limit", value: "\(limit)")
+            URLQueryItem(name: "limit", value: "\(limit)"),
+            URLQueryItem(name: "allMailboxes", value: allMailboxes ? "true" : "false")
         ]
         if let cid, !cid.isEmpty {
             items.append(URLQueryItem(name: "cid", value: cid))
@@ -612,14 +618,20 @@ public final class VipleMailAPIClient {
     ) async {
         let devId = resolvedDeviceIdentifier
         guard !devId.isEmpty, !email.isEmpty else { return }
+        #if DEBUG
+        let apnsEnv = "sandbox"
+        #else
+        let apnsEnv = "production"
+        #endif
         let payload: [String: Any] = [
             "email": email,
             "cid": cid ?? "",
             "deviceId": devId,
             "vendorId": devId,
             "apnsToken": apnsToken ?? "",
+            "apnsEnvironment": apnsEnv,
             "platform": "iOS",
-            "appVersion": "2026.11.2",
+            "appVersion": "2026.11.7",
             "notificationsEnabled": notificationsEnabled,
             "vipOnly": vipOnly
         ]

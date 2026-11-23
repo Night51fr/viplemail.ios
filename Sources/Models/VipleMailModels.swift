@@ -579,6 +579,7 @@ public struct VipleMailNotificationItem: Codable, Identifiable, Equatable, Senda
     public let receivedAt: String
     public let isChatMessage: Bool?
     public let chatSessionId: String?
+    public let mailboxEmail: String?
 
     public init(
         id: String,
@@ -593,7 +594,8 @@ public struct VipleMailNotificationItem: Codable, Identifiable, Equatable, Senda
         hasAttachments: Bool,
         receivedAt: String,
         isChatMessage: Bool? = false,
-        chatSessionId: String? = nil
+        chatSessionId: String? = nil,
+        mailboxEmail: String? = nil
     ) {
         self.id = id
         self.threadId = threadId
@@ -608,6 +610,7 @@ public struct VipleMailNotificationItem: Codable, Identifiable, Equatable, Senda
         self.receivedAt = receivedAt
         self.isChatMessage = isChatMessage
         self.chatSessionId = chatSessionId
+        self.mailboxEmail = mailboxEmail
     }
 }
 

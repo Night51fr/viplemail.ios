@@ -62,6 +62,9 @@ public actor AppAttestManager {
     private let attestEnrolledFlagAccount = "dcappattest.enrolled.v1"
     private let dpopPrivateKeyAccount = "dpop.p256.privkey.v1"
     private let serverSignPubKeyAccount = "server.ed25519.pubkey.v1"
+    private let dpopBgMigratedFlagKey = "viple.mail.dpop.afterFirstUnlock.migrated.v1"
+
+    private var cachedDpopKey: P256.Signing.PrivateKey? = nil
 
     private init() {}
 
@@ -255,19 +258,42 @@ public actor AppAttestManager {
 
     /// Révoque et détruit immédiatement toutes les clés locales (appelé par SecurityGuard en cas d'anomalie runtime).
     public func revokeLocalHardwareSession() {
+        cachedDpopKey = nil
         deleteKeychainItem(account: attestKeyIdAccount)
         deleteKeychainItem(account: attestEnrolledFlagAccount)
         deleteKeychainItem(account: dpopPrivateKeyAccount)
     }
 
-    // MARK: - Gestion Keychain Matériel (kSecAttrAccessibleWhenUnlockedThisDeviceOnly)
+    /// Garantit que la clé DPoP liée à l'appareil est accessible en arrière-plan (écran verrouillé après premier déverrouillage)
+    /// pour permettre à BGAppRefreshTask / BGProcessingTask et aux notifications silencieuses de signer leurs requêtes sans erreur -25308.
+    public func ensureBackgroundDpopKeyMigrated() {
+        do {
+            let key = try loadOrCreateDeviceBoundDpopKey()
+            cachedDpopKey = key
+            if !UserDefaults.standard.bool(forKey: dpopBgMigratedFlagKey) {
+                try saveKeychainData(key.rawRepresentation, account: dpopPrivateKeyAccount, allowBackgroundAfterFirstUnlock: true)
+                UserDefaults.standard.set(true, forKey: dpopBgMigratedFlagKey)
+            }
+        } catch {
+            // Si l'appareil est encore verrouillé au tout premier démarrage à froid, la migration s'exécutera dès le passage au premier plan.
+        }
+    }
+
+    // MARK: - Gestion Keychain Matériel (ThisDeviceOnly + support synchronisation arrière-plan DPoP)
 
     private func loadOrCreateDeviceBoundDpopKey() throws -> P256.Signing.PrivateKey {
+        if let mem = cachedDpopKey {
+            return mem
+        }
         if let raw = try readKeychainData(account: dpopPrivateKeyAccount) {
-            return try P256.Signing.PrivateKey(rawRepresentation: raw)
+            let loaded = try P256.Signing.PrivateKey(rawRepresentation: raw)
+            cachedDpopKey = loaded
+            return loaded
         }
         let created = P256.Signing.PrivateKey()
-        try saveKeychainData(created.rawRepresentation, account: dpopPrivateKeyAccount)
+        try saveKeychainData(created.rawRepresentation, account: dpopPrivateKeyAccount, allowBackgroundAfterFirstUnlock: true)
+        UserDefaults.standard.set(true, forKey: dpopBgMigratedFlagKey)
+        cachedDpopKey = created
         return created
     }
 
@@ -286,14 +312,17 @@ public actor AppAttestManager {
         }
     }
 
-    private func saveKeychainData(_ data: Data, account: String) throws {
+    private func saveKeychainData(_ data: Data, account: String, allowBackgroundAfterFirstUnlock: Bool = false) throws {
         deleteKeychainItem(account: account)
+        let accessibility = (allowBackgroundAfterFirstUnlock || account == dpopPrivateKeyAccount || account == serverSignPubKeyAccount)
+            ? kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            : kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: account,
             kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            kSecAttrAccessible as String: accessibility
         ]
         let status = SecItemAdd(query as CFDictionary, nil)
         guard status == errSecSuccess else {

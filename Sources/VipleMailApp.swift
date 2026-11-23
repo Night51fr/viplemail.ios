@@ -7,9 +7,23 @@ import UIKit
 
 #if canImport(UIKit)
 private final class RemoteFetchCompletionBox: @unchecked Sendable {
-    let complete: (UIBackgroundFetchResult) -> Void
+    private let lock = NSLock()
+    private var completed = false
+    private let completeBlock: (UIBackgroundFetchResult) -> Void
+
     init(_ complete: @escaping (UIBackgroundFetchResult) -> Void) {
-        self.complete = complete
+        self.completeBlock = complete
+    }
+
+    func complete(_ result: UIBackgroundFetchResult) {
+        lock.lock()
+        guard !completed else {
+            lock.unlock()
+            return
+        }
+        completed = true
+        lock.unlock()
+        completeBlock(result)
     }
 }
 
@@ -34,7 +48,20 @@ public final class VipleMailAppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFailToRegisterForRemoteNotificationsWithError error: Error
     ) {
-        // Sur simulateur ou profil sans jeton APNs distant, le moteur BGAppRefreshTask + sondage IMAP rapide prend le relais automatiquement
+        // Sur simulateur sans jeton APNs distant, BGAppRefreshTask + BGProcessingTask + fenêtre arrière-plan assurent le relais
+        VipleMailNotificationManager.shared.scheduleBackgroundTasks()
+    }
+
+    public func application(
+        _ application: UIApplication,
+        performFetchWithCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+    ) {
+        let box = RemoteFetchCompletionBox(completionHandler)
+        Task { @MainActor in
+            VipleMailNotificationManager.shared.scheduleBackgroundTasks()
+            let ok = await VipleMailNotificationManager.shared.performNotificationPollCycle(isBackground: true)
+            box.complete(ok ? .newData : .noData)
+        }
     }
 
     public func application(
@@ -44,6 +71,7 @@ public final class VipleMailAppDelegate: NSObject, UIApplicationDelegate {
     ) {
         let box = RemoteFetchCompletionBox(completionHandler)
         Task { @MainActor in
+            VipleMailNotificationManager.shared.scheduleBackgroundTasks()
             let ok = await VipleMailNotificationManager.shared.performNotificationPollCycle(isBackground: true)
             box.complete(ok ? .newData : .noData)
         }
@@ -71,15 +99,18 @@ public struct VipleMailApp: App {
                 .tint(VipleMailPalette.primary)
                 .onAppear {
                     notifManager.attachedViewModel = mailVM
-                    notifManager.startForegroundSyncLoop()
+                    if scenePhase != .background {
+                        notifManager.enterForegroundMode()
+                    } else {
+                        notifManager.scheduleBackgroundTasks()
+                    }
                 }
                 .onChange(of: scenePhase) { _, newPhase in
                     switch newPhase {
                     case .active:
                         notifManager.attachedViewModel = mailVM
-                        notifManager.startForegroundSyncLoop()
+                        notifManager.enterForegroundMode()
                         Task {
-                            await notifManager.refreshAuthorizationStatus()
                             if let pendingId = UserDefaults.standard.string(forKey: "viple.mail.ios.pendingOpenMsgId"),
                                !pendingId.isEmpty {
                                 UserDefaults.standard.removeObject(forKey: "viple.mail.ios.pendingOpenMsgId")
@@ -87,10 +118,9 @@ public struct VipleMailApp: App {
                             }
                         }
                     case .background:
-                        notifManager.stopForegroundSyncLoop()
-                        notifManager.scheduleBackgroundTasks()
+                        notifManager.enterBackgroundMode()
                     case .inactive:
-                        break
+                        notifManager.scheduleBackgroundTasks()
                     @unknown default:
                         break
                     }
