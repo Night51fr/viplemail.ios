@@ -4,6 +4,7 @@ import SwiftUI
 
 public struct InboxListView: View {
     @EnvironmentObject private var vm: VipleMailViewModel
+    @Environment(\.colorScheme) private var colorScheme
     @State private var moveTargetSheetMessageIds: [String] = []
     @State private var isShowingMoveFolderSheet: Bool = false
 
@@ -58,6 +59,8 @@ public struct InboxListView: View {
                     }
                 }
                 .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .background(VipleMailPalette.background)
                 .refreshable {
                     await vm.refreshBootstrap()
                 }
@@ -219,7 +222,14 @@ public struct InboxListView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(VipleMailPalette.surface)
+        .background(
+            VipleMailPalette.surface
+                .overlay(alignment: .bottom) {
+                    Rectangle()
+                        .fill(VipleMailPalette.border)
+                        .frame(height: 0.6)
+                }
+        )
     }
 
     private var cenelisAgentProposalBanner: some View {
@@ -346,8 +356,12 @@ public struct InboxListView: View {
             .padding(.vertical, 7)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(active ? VipleMailPalette.surface : Color.clear)
-                    .shadow(color: active ? Color.black.opacity(0.06) : .clear, radius: 4, x: 0, y: 2)
+                    .fill(active ? VipleMailPalette.surfaceElevated : Color.clear)
+                    .shadow(color: active ? Color.black.opacity(colorScheme == .dark ? 0.28 : 0.06) : .clear, radius: 4, x: 0, y: 2)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(active && colorScheme == .dark ? VipleMailPalette.border : Color.clear, lineWidth: 1)
             )
             .foregroundStyle(active ? VipleMailPalette.primary : VipleMailPalette.inkSecondary)
         }
@@ -664,13 +678,26 @@ public struct InboxListView: View {
         .padding(14)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(isSelected ? VipleMailPalette.primary.opacity(0.09) : (msg.isRead ? VipleMailPalette.surface : VipleMailPalette.surface))
-                .shadow(color: VipleMailPalette.cobaltDeep.opacity(msg.isRead ? 0.03 : 0.08), radius: 10, x: 0, y: 4)
+                .fill(
+                    isSelected
+                        ? VipleMailPalette.primary.opacity(colorScheme == .dark ? 0.16 : 0.09)
+                        : (msg.isRead ? VipleMailPalette.surface : VipleMailPalette.surfaceElevated)
+                )
+                .shadow(
+                    color: colorScheme == .dark
+                        ? Color.black.opacity(msg.isRead ? 0.24 : 0.38)
+                        : VipleMailPalette.cobaltDeep.opacity(msg.isRead ? 0.03 : 0.08),
+                    radius: 10,
+                    x: 0,
+                    y: 4
+                )
         )
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(
-                    isSelected ? VipleMailPalette.primary : (!msg.isRead ? VipleMailPalette.primary.opacity(0.32) : VipleMailPalette.border),
+                    isSelected
+                        ? VipleMailPalette.primary
+                        : (!msg.isRead ? VipleMailPalette.primary.opacity(colorScheme == .dark ? 0.44 : 0.32) : VipleMailPalette.border),
                     lineWidth: !msg.isRead || isSelected ? 1.4 : 1
                 )
         )
@@ -853,6 +880,8 @@ public struct InboxListView: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(VipleMailPalette.background)
             .navigationTitle("Déplacer vers...")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -864,5 +893,6 @@ public struct InboxListView: View {
             }
         }
         .presentationDetents([.medium])
+        .preferredColorScheme(vm.preferredColorSchemeOverride)
     }
 }

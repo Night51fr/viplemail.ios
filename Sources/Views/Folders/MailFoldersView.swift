@@ -403,5 +403,6 @@ public struct MailFoldersView: View {
             }
         }
         .presentationDetents([.height(260)])
+        .preferredColorScheme(vm.preferredColorSchemeOverride)
     }
 }

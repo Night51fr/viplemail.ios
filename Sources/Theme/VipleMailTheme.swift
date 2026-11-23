@@ -3,7 +3,49 @@ import SwiftUI
 import UIKit
 #endif
 
-// MARK: - Chargeur & Cache Mémoire de Photos de Profil Viple Live ID (@viplemail.fr)
+// MARK: - Mode d'Apparence Utilisateur « Viple Mail » (Automatique iOS, Clair ou Sombre OLED)
+
+public enum VipleMailAppearanceMode: String, CaseIterable, Identifiable, Codable, Sendable {
+    case system = "system"
+    case light = "light"
+    case dark = "dark"
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .system: return "Automatique"
+        case .light: return "Clair"
+        case .dark: return "Sombre"
+        }
+    }
+
+    public var subtitle: String {
+        switch self {
+        case .system: return "Suit le réglage d'apparence d'iOS"
+        case .light: return "Fond clair lumineux en permanence"
+        case .dark: return "Mode sombre OLED optimisé"
+        }
+    }
+
+    public var iconName: String {
+        switch self {
+        case .system: return "circle.lefthalf.filled"
+        case .light: return "sun.max.fill"
+        case .dark: return "moon.stars.fill"
+        }
+    }
+
+    public var preferredColorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
+}
+
+// MARK: - Chargeur & Cache Mémoire de Photos de Profil Viple Live ID (@viplemail.fr & @cenelis.com)
 
 @MainActor
 public final class VipleMailAvatarImageCache {
@@ -66,32 +108,131 @@ public final class VipleMailAvatarImageCache {
     #endif
 }
 
-// MARK: - Design System & Palette « Viple Mail » (iOS 18+ / 2026 • Identité Viple Live ID)
+// MARK: - Design System & Palette Dynamique Clair / Sombre OLED « Viple Mail » (iOS 18+ / 2026)
 
 public enum VipleMailPalette {
-    public static let cobaltDeep = Color(red: 0.02, green: 0.14, blue: 0.42)
-    public static let primary = Color(red: 0.00, green: 0.47, blue: 0.83)       // #0078D4 Viple Live Blue
-    public static let azureGlow = Color(red: 0.16, green: 0.78, blue: 0.98)     // #28C7FA Viple Cyan
-    public static let indigo = Color(red: 0.31, green: 0.27, blue: 0.90)
-    public static let vipGold = Color(red: 0.96, green: 0.62, blue: 0.04)
-    public static let starYellow = Color(red: 0.92, green: 0.70, blue: 0.03)
-    public static let success = Color(red: 0.06, green: 0.73, blue: 0.51)
-    public static let warning = Color(red: 0.98, green: 0.45, blue: 0.09)
-    public static let danger = Color(red: 0.94, green: 0.27, blue: 0.27)
+    private static func dynamicColor(
+        light: (CGFloat, CGFloat, CGFloat, CGFloat),
+        dark: (CGFloat, CGFloat, CGFloat, CGFloat)
+    ) -> Color {
+        #if canImport(UIKit)
+        return Color(uiColor: UIColor { traits in
+            let c = traits.userInterfaceStyle == .dark ? dark : light
+            return UIColor(red: c.0, green: c.1, blue: c.2, alpha: c.3)
+        })
+        #else
+        return Color(red: Double(light.0), green: Double(light.1), blue: Double(light.2)).opacity(Double(light.3))
+        #endif
+    }
 
-    public static let background = Color(red: 0.95, green: 0.97, blue: 1.00)
-    public static let surface = Color.white
-    public static let surfaceSubtle = Color(red: 0.92, green: 0.95, blue: 0.99)
-    public static let border = Color(red: 0.84, green: 0.89, blue: 0.96)
-    public static let ink = Color(red: 0.05, green: 0.10, blue: 0.22)
-    public static let inkSecondary = Color(red: 0.28, green: 0.36, blue: 0.48)
-    public static let inkMuted = Color(red: 0.46, green: 0.54, blue: 0.65)
+    // Couleurs identitaires & accents calibrés Clair / Sombre
+    public static let cobaltDeep = Color(red: 0.02, green: 0.14, blue: 0.42)
+    public static let primarySolid = Color(red: 0.00, green: 0.47, blue: 0.83) // #0078D4 pour fonds pleins
+    public static let primary = dynamicColor(
+        light: (0.000, 0.471, 0.831, 1.0), // #0078D4 Viple Live Blue
+        dark:  (0.165, 0.565, 1.000, 1.0)  // #2A90FF Luminous Azure (contraste élevé sur ardoise OLED)
+    )
+    public static let azureGlow = dynamicColor(
+        light: (0.160, 0.780, 0.980, 1.0), // #28C7FA
+        dark:  (0.260, 0.820, 1.000, 1.0)  // #42D1FF
+    )
+    public static let indigo = dynamicColor(
+        light: (0.310, 0.270, 0.900, 1.0),
+        dark:  (0.510, 0.549, 0.973, 1.0)
+    )
+    public static let vipGold = dynamicColor(
+        light: (0.945, 0.590, 0.035, 1.0),
+        dark:  (0.984, 0.749, 0.141, 1.0)
+    )
+    public static let starYellow = dynamicColor(
+        light: (0.910, 0.680, 0.030, 1.0),
+        dark:  (0.980, 0.800, 0.082, 1.0)
+    )
+    public static let success = dynamicColor(
+        light: (0.059, 0.690, 0.480, 1.0),
+        dark:  (0.204, 0.827, 0.600, 1.0)
+    )
+    public static let warning = dynamicColor(
+        light: (0.960, 0.450, 0.086, 1.0),
+        dark:  (0.984, 0.573, 0.235, 1.0)
+    )
+    public static let danger = dynamicColor(
+        light: (0.910, 0.235, 0.235, 1.0),
+        dark:  (0.973, 0.443, 0.443, 1.0)
+    )
+
+    // Surfaces & hiérarchie de profondeur Clair / Sombre OLED
+    public static let background = dynamicColor(
+        light: (0.949, 0.969, 1.000, 1.0), // #F2F7FF
+        dark:  (0.027, 0.043, 0.078, 1.0)  // #070B14 Noir saphir OLED profond
+    )
+    public static let surface = dynamicColor(
+        light: (1.000, 1.000, 1.000, 1.0), // #FFFFFF
+        dark:  (0.063, 0.090, 0.149, 1.0)  // #101726 Carte ardoise nuit
+    )
+    public static let surfaceElevated = dynamicColor(
+        light: (1.000, 1.000, 1.000, 1.0), // #FFFFFF
+        dark:  (0.090, 0.129, 0.208, 1.0)  // #172135 Carte surélevée / courrier non lu / segment actif
+    )
+    public static let surfaceSubtle = dynamicColor(
+        light: (0.922, 0.949, 0.992, 1.0), // #EBF2FD
+        dark:  (0.098, 0.137, 0.220, 1.0)  // #192338 Champs de saisie, puces & blocs secondaires
+    )
+    public static let toastSurface = dynamicColor(
+        light: (0.035, 0.125, 0.340, 0.96),
+        dark:  (0.110, 0.165, 0.275, 0.98)
+    )
+    public static let border = dynamicColor(
+        light: (0.839, 0.890, 0.961, 1.0),  // #D6E3F5
+        dark:  (0.580, 0.702, 0.890, 0.17)  // Liseré verre lumineux subtil en mode sombre
+    )
+
+    // Typographie haute lisibilité WCAG AAA
+    public static let ink = dynamicColor(
+        light: (0.051, 0.102, 0.220, 1.0), // #0D1A38
+        dark:  (0.945, 0.965, 0.992, 1.0)  // #F1F6FD Blanc doux sans halo OLED
+    )
+    public static let inkSecondary = dynamicColor(
+        light: (0.278, 0.361, 0.478, 1.0), // #475C7A
+        dark:  (0.667, 0.729, 0.820, 1.0)  // #AABAd1
+    )
+    public static let inkMuted = dynamicColor(
+        light: (0.455, 0.537, 0.651, 1.0), // #7489A6
+        dark:  (0.494, 0.569, 0.682, 1.0)  // #7E91AE
+    )
 
     public static let heroGradient = LinearGradient(
-        colors: [cobaltDeep, primary, azureGlow],
+        colors: [
+            Color(red: 0.02, green: 0.16, blue: 0.48),
+            Color(red: 0.00, green: 0.45, blue: 0.86),
+            Color(red: 0.12, green: 0.70, blue: 0.96)
+        ],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
     )
+
+    public static func authBackdropGradient(for scheme: ColorScheme) -> LinearGradient {
+        if scheme == .dark {
+            return LinearGradient(
+                colors: [
+                    Color(red: 0.02, green: 0.07, blue: 0.18),
+                    Color(red: 0.03, green: 0.13, blue: 0.30),
+                    background
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        }
+        return LinearGradient(
+            colors: [
+                cobaltDeep,
+                Color(red: 0.00, green: 0.32, blue: 0.72),
+                background
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
 
     public static func avatarGradient(for seed: String) -> LinearGradient {
         let palettes: [[Color]] = [
@@ -118,13 +259,37 @@ public enum VipleMailPalette {
         default:
             (r, g, b) = (0, 120, 212)
         }
-        return Color(red: Double(r) / 255.0, green: Double(g) / 255.0, blue: Double(b) / 255.0)
+        let rf = CGFloat(r) / 255.0
+        let gf = CGFloat(g) / 255.0
+        let bf = CGFloat(b) / 255.0
+
+        #if canImport(UIKit)
+        return Color(uiColor: UIColor { traits in
+            let lightColor = UIColor(red: rf, green: gf, blue: bf, alpha: 1.0)
+            guard traits.userInterfaceStyle == .dark else { return lightColor }
+
+            // Luminance relative : éclaircit automatiquement les teintes sombres (ex: #475569, #003D8F, #0050D7) sur fond OLED
+            let luminance = 0.2126 * rf + 0.7152 * gf + 0.0722 * bf
+            if luminance < 0.34 {
+                var h: CGFloat = 0, s: CGFloat = 0, br: CGFloat = 0, a: CGFloat = 0
+                if lightColor.getHue(&h, saturation: &s, brightness: &br, alpha: &a) {
+                    let boostedBrightness = max(br, 0.82)
+                    let balancedSaturation = s > 0.12 ? min(max(s * 0.85, 0.45), 0.78) : s
+                    return UIColor(hue: h, saturation: balancedSaturation, brightness: boostedBrightness, alpha: a)
+                }
+            }
+            return lightColor
+        })
+        #else
+        return Color(red: Double(rf), green: Double(gf), blue: Double(bf))
+        #endif
     }
 }
 
-// MARK: - Modificateur de Carte Glassmorphic Viple Mail
+// MARK: - Modificateur de Carte Adaptative Clair / Sombre « Viple Mail »
 
 public struct VipleMailCardModifier: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
     public var cornerRadius: CGFloat
     public var padding: CGFloat
 
@@ -134,7 +299,14 @@ public struct VipleMailCardModifier: ViewModifier {
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(VipleMailPalette.surface)
-                    .shadow(color: VipleMailPalette.cobaltDeep.opacity(0.06), radius: 14, x: 0, y: 5)
+                    .shadow(
+                        color: colorScheme == .dark
+                            ? Color.black.opacity(0.36)
+                            : VipleMailPalette.cobaltDeep.opacity(0.06),
+                        radius: colorScheme == .dark ? 12 : 14,
+                        x: 0,
+                        y: colorScheme == .dark ? 6 : 5
+                    )
             )
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -149,9 +321,10 @@ extension View {
     }
 }
 
-// MARK: - Logo Horizontal « Viple Mail » (Signature Visuelle Haut-Gauche)
+// MARK: - Logo Horizontal « Viple Mail » (Signature Visuelle Haut-Gauche Adaptative)
 
 public struct VipleMailHorizontalLogoView: View {
+    @Environment(\.colorScheme) private var colorScheme
     public var height: CGFloat = 36
     public var lightModeOnDarkBackground: Bool = false
 
@@ -166,7 +339,12 @@ public struct VipleMailHorizontalLogoView: View {
                 RoundedRectangle(cornerRadius: height * 0.26, style: .continuous)
                     .fill(VipleMailPalette.heroGradient)
                     .frame(width: height, height: height)
-                    .shadow(color: VipleMailPalette.primary.opacity(0.35), radius: 6, x: 0, y: 3)
+                    .shadow(
+                        color: VipleMailPalette.primarySolid.opacity(colorScheme == .dark ? 0.45 : 0.32),
+                        radius: 6,
+                        x: 0,
+                        y: 3
+                    )
 
                 Image(systemName: "envelope.open.fill")
                     .font(.system(size: height * 0.46, weight: .bold))
@@ -185,7 +363,7 @@ public struct VipleMailHorizontalLogoView: View {
                         .foregroundStyle(lightModeOnDarkBackground ? Color.white : VipleMailPalette.ink)
                     Text("Mail")
                         .font(.system(size: height * 0.56, weight: .semibold, design: .rounded))
-                        .foregroundStyle(lightModeOnDarkBackground ? VipleMailPalette.azureGlow : VipleMailPalette.primary)
+                        .foregroundStyle((lightModeOnDarkBackground || colorScheme == .dark) ? VipleMailPalette.azureGlow : VipleMailPalette.primary)
                 }
                 Text("Un service Viple Live")
                     .font(.system(size: max(9.5, height * 0.24), weight: .bold, design: .rounded))
@@ -199,6 +377,7 @@ public struct VipleMailHorizontalLogoView: View {
 // MARK: - Avatar Expéditeur / Contact Synchronisé Viple Live ID avec Badge VIP
 
 public struct VipleMailAvatarView: View {
+    @Environment(\.colorScheme) private var colorScheme
     public let name: String
     public let email: String
     public var avatarUrl: String? = nil
@@ -261,7 +440,12 @@ public struct VipleMailAvatarView: View {
             .frame(width: size, height: size)
             .overlay(
                 Circle()
-                    .stroke(isVip ? VipleMailPalette.vipGold : Color.white.opacity(0.45), lineWidth: isVip ? 2 : 1)
+                    .stroke(
+                        isVip
+                            ? VipleMailPalette.vipGold
+                            : Color.white.opacity(colorScheme == .dark ? 0.16 : 0.45),
+                        lineWidth: isVip ? 2 : 1
+                    )
             )
             .task(id: "\(email.lowercased())|\(avatarUrl ?? "")") {
                 #if canImport(UIKit)
@@ -278,6 +462,7 @@ public struct VipleMailAvatarView: View {
                     Circle()
                         .fill(VipleMailPalette.vipGold)
                         .frame(width: size * 0.38, height: size * 0.38)
+                        .overlay(Circle().stroke(VipleMailPalette.surface, lineWidth: 1.5))
                     Image(systemName: "crown.fill")
                         .font(.system(size: size * 0.20, weight: .bold))
                         .foregroundStyle(.white)
@@ -287,7 +472,7 @@ public struct VipleMailAvatarView: View {
                 Circle()
                     .fill(VipleMailPalette.primary)
                     .frame(width: size * 0.28, height: size * 0.28)
-                    .overlay(Circle().stroke(Color.white, lineWidth: 2))
+                    .overlay(Circle().stroke(VipleMailPalette.surface, lineWidth: 2))
                     .offset(x: 1, y: 1)
             }
         }

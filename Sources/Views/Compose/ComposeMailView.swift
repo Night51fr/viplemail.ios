@@ -1046,6 +1046,8 @@ public struct ComposeMailView: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(VipleMailPalette.background)
             .navigationTitle("Choisir un destinataire")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1056,6 +1058,7 @@ public struct ComposeMailView: View {
                 }
             }
         }
+        .preferredColorScheme(vm.preferredColorSchemeOverride)
     }
 
     // MARK: - Helpers & Actions

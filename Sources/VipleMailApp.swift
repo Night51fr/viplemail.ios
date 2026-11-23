@@ -97,7 +97,9 @@ public struct VipleMailApp: App {
                 .environmentObject(mailVM)
                 .environmentObject(notifManager)
                 .tint(VipleMailPalette.primary)
+                .preferredColorScheme(mailVM.preferredColorSchemeOverride)
                 .onAppear {
+                    mailVM.applyWindowInterfaceStyle()
                     notifManager.attachedViewModel = mailVM
                     if scenePhase != .background {
                         notifManager.enterForegroundMode()

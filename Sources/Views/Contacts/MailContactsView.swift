@@ -298,6 +298,8 @@ public struct MailContactsView: View {
                     TextField("Notes", text: $contactNotes)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(VipleMailPalette.background)
             .navigationTitle(editingContactId == nil ? "Nouveau contact" : "Modifier le contact")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -329,6 +331,7 @@ public struct MailContactsView: View {
                 }
             }
         }
+        .preferredColorScheme(vm.preferredColorSchemeOverride)
     }
 
     private func prepareNewContactForm() {

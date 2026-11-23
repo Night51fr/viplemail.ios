@@ -72,6 +72,8 @@ public struct MailChatView: View {
                     }
                 }
                 .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .background(VipleMailPalette.background)
                 .refreshable {
                     await vm.refreshChatSessions()
                 }
@@ -402,6 +404,7 @@ public struct MailChatView: View {
             }
         }
         .presentationDetents([.medium, .large])
+        .preferredColorScheme(vm.preferredColorSchemeOverride)
     }
 }
 
@@ -655,7 +658,7 @@ public struct MailChatConversationView: View {
                         .fill(
                             isMine
                                 ? AnyShapeStyle(VipleMailPalette.heroGradient)
-                                : AnyShapeStyle(VipleMailPalette.surface)
+                                : AnyShapeStyle(VipleMailPalette.surfaceElevated)
                         )
                 )
                 .overlay(
@@ -697,6 +700,7 @@ public struct MailChatConversationView: View {
                             .foregroundStyle(VipleMailPalette.primary)
                         Text(att.fileName)
                             .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(VipleMailPalette.ink)
                             .lineLimit(1)
                         Button {
                             stagedAttachments.removeAll { $0.id == att.id }
@@ -739,6 +743,7 @@ public struct MailChatConversationView: View {
 
             TextField("Message instantané…", text: $draftText, axis: .vertical)
                 .font(.system(size: 15.5))
+                .foregroundStyle(VipleMailPalette.ink)
                 .lineLimit(1...5)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)

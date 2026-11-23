@@ -5,6 +5,7 @@ import AuthenticationServices
 
 public struct VipleMailAuthView: View {
     @EnvironmentObject private var vm: VipleMailViewModel
+    @Environment(\.colorScheme) private var colorScheme
 
     public enum AuthTab: String, CaseIterable {
         case login = "Se connecter"
@@ -36,16 +37,8 @@ public struct VipleMailAuthView: View {
 
     public var body: some View {
         ZStack {
-            LinearGradient(
-                colors: [
-                    VipleMailPalette.cobaltDeep,
-                    Color(red: 0.00, green: 0.32, blue: 0.72),
-                    VipleMailPalette.background
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
+            VipleMailPalette.authBackdropGradient(for: colorScheme)
+                .ignoresSafeArea()
 
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 20) {
@@ -220,7 +213,8 @@ public struct VipleMailAuthView: View {
             } onCompletion: { result in
                 handleAppleSignInResult(result)
             }
-            .signInWithAppleButtonStyle(.black)
+            .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
+            .id(colorScheme)
             .frame(height: 50)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
 
@@ -615,23 +609,18 @@ public struct VipleMailAuthView: View {
         HStack(spacing: 12) {
             Image(systemName: "network.badge.shield.half.filled")
                 .font(.system(size: 22))
-                .foregroundStyle(VipleMailPalette.azureGlow)
+                .foregroundStyle(VipleMailPalette.primary)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Écosystème Viple Live 2026")
+                Text("Écosystème Viple Live & Groupe Cenelis")
                     .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-                Text("Un seul identifiant pour Viple Mail, Livria Store, Livria Social, Viple & Moi et SkyDrive.")
+                    .foregroundStyle(VipleMailPalette.ink)
+                Text("Un seul identifiant pour Viple Mail, Cenelis Workspace, Livria Store, Livria Social, Viple & Moi et SkyDrive.")
                     .font(.system(size: 11.5))
-                    .foregroundStyle(.white.opacity(0.82))
+                    .foregroundStyle(VipleMailPalette.inkSecondary)
             }
             Spacer()
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.white.opacity(0.12))
-                .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.22), lineWidth: 1))
-        )
+        .vipleMailCard(cornerRadius: 16, padding: 14)
     }
 
     private func loginDomainQuickPill(domain: String, label: String, icon: String) -> some View {

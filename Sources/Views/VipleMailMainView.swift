@@ -4,6 +4,7 @@ import SwiftUI
 
 public struct VipleMailMainView: View {
     @EnvironmentObject private var vm: VipleMailViewModel
+    @Environment(\.colorScheme) private var colorScheme
 
     public init() {}
 
@@ -38,34 +39,54 @@ public struct VipleMailMainView: View {
         .fullScreenCover(isPresented: $vm.isShowingComposeSheet) {
             ComposeMailView(mode: vm.activeComposeMode ?? .newMail())
                 .environmentObject(vm)
+                .preferredColorScheme(vm.preferredColorSchemeOverride)
         }
         .sheet(isPresented: $vm.isShowingAddExternalAccountSheet) {
             AddExternalAccountSheet()
                 .environmentObject(vm)
+                .preferredColorScheme(vm.preferredColorSchemeOverride)
         }
     }
 
-    // MARK: - Splash Screen Animé Viple Mail
+    // MARK: - Splash Screen Animé Viple Mail (Adaptatif Clair / Sombre OLED)
 
     private var splashScreen: some View {
         ZStack {
-            VipleMailPalette.heroGradient
-                .ignoresSafeArea()
+            Group {
+                if colorScheme == .dark {
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.02, green: 0.05, blue: 0.12),
+                            Color(red: 0.03, green: 0.12, blue: 0.28),
+                            Color(red: 0.04, green: 0.22, blue: 0.48)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                } else {
+                    VipleMailPalette.heroGradient
+                }
+            }
+            .ignoresSafeArea()
 
             VStack(spacing: 20) {
                 ZStack {
                     Circle()
-                        .fill(Color.white.opacity(0.14))
+                        .fill(Color.white.opacity(colorScheme == .dark ? 0.09 : 0.14))
                         .frame(width: 118, height: 118)
 
                     RoundedRectangle(cornerRadius: 28, style: .continuous)
-                        .fill(Color.white)
+                        .fill(colorScheme == .dark ? Color(red: 0.09, green: 0.14, blue: 0.24) : Color.white)
                         .frame(width: 92, height: 92)
-                        .shadow(color: Color.black.opacity(0.22), radius: 18, x: 0, y: 10)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                                .stroke(Color.white.opacity(colorScheme == .dark ? 0.16 : 0), lineWidth: 1)
+                        )
+                        .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.45 : 0.22), radius: 18, x: 0, y: 10)
 
                     Image(systemName: "envelope.open.fill")
                         .font(.system(size: 42, weight: .bold))
-                        .foregroundStyle(VipleMailPalette.primary)
+                        .foregroundStyle(colorScheme == .dark ? VipleMailPalette.azureGlow : VipleMailPalette.primary)
                 }
 
                 VStack(spacing: 6) {
@@ -290,7 +311,19 @@ public struct VipleMailMainView: View {
         .padding(.vertical, 10)
         .background(
             VipleMailPalette.surface
-                .shadow(color: VipleMailPalette.cobaltDeep.opacity(0.05), radius: 8, x: 0, y: 3)
+                .overlay(alignment: .bottom) {
+                    if colorScheme == .dark {
+                        Rectangle()
+                            .fill(VipleMailPalette.border)
+                            .frame(height: 0.6)
+                    }
+                }
+                .shadow(
+                    color: colorScheme == .dark ? Color.black.opacity(0.35) : VipleMailPalette.cobaltDeep.opacity(0.05),
+                    radius: 8,
+                    x: 0,
+                    y: 3
+                )
         )
     }
 
@@ -379,7 +412,19 @@ public struct VipleMailMainView: View {
         .padding(.bottom, 6)
         .background(
             VipleMailPalette.surface
-                .shadow(color: VipleMailPalette.cobaltDeep.opacity(0.08), radius: 14, x: 0, y: -4)
+                .overlay(alignment: .top) {
+                    if colorScheme == .dark {
+                        Rectangle()
+                            .fill(VipleMailPalette.border)
+                            .frame(height: 0.6)
+                    }
+                }
+                .shadow(
+                    color: colorScheme == .dark ? Color.black.opacity(0.45) : VipleMailPalette.cobaltDeep.opacity(0.08),
+                    radius: 14,
+                    x: 0,
+                    y: -4
+                )
                 .ignoresSafeArea(edges: .bottom)
         )
     }
@@ -442,8 +487,12 @@ public struct VipleMailMainView: View {
         .padding(.vertical, 12)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(VipleMailPalette.cobaltDeep.opacity(0.96))
-                .shadow(color: Color.black.opacity(0.22), radius: 14, x: 0, y: 6)
+                .fill(VipleMailPalette.toastSurface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(VipleMailPalette.azureGlow.opacity(colorScheme == .dark ? 0.28 : 0.14), lineWidth: 1)
+                )
+                .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.45 : 0.22), radius: 14, x: 0, y: 6)
         )
     }
 }

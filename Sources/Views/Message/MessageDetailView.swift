@@ -8,6 +8,7 @@ import WebKit
 #if canImport(WebKit) && canImport(UIKit)
 private struct VipleMailHTMLWebView: UIViewRepresentable {
     let htmlBody: String
+    let renderDark: Bool
     @Binding var dynamicHeight: CGFloat
 
     func makeCoordinator() -> Coordinator {
@@ -26,25 +27,134 @@ private struct VipleMailHTMLWebView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
+        context.coordinator.parent = self
+        uiView.overrideUserInterfaceStyle = renderDark ? .dark : .light
+
+        let schemeMeta = renderDark ? "dark light" : "light"
+        let baseCss: String
+        if renderDark {
+            baseCss = """
+            :root { color-scheme: dark light; }
+            html, body {
+              margin: 0; padding: 0;
+              font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+              font-size: 15.5px; line-height: 1.58;
+              color: #F1F6FD;
+              word-wrap: break-word; overflow-wrap: anywhere;
+              background: transparent !important;
+            }
+            img { max-width: 100% !important; height: auto !important; border-radius: 6px; }
+            table { max-width: 100% !important; border-color: rgba(148, 179, 226, 0.20); }
+            hr { border: none; border-top: 1px solid rgba(148, 179, 226, 0.18); }
+            pre, code {
+              background-color: #192338 !important;
+              color: #E2EEFF !important;
+              border-radius: 6px;
+              padding: 2px 5px;
+            }
+            blockquote {
+              margin: 12px 0; padding-left: 12px;
+              border-left: 2.5px solid #3B5278;
+              color: #AABAd1;
+            }
+            a { color: #47A3FF; }
+            """
+        } else {
+            baseCss = """
+            :root { color-scheme: light; }
+            html, body {
+              margin: 0; padding: 0;
+              font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+              font-size: 15.5px; line-height: 1.58;
+              color: #0f172a;
+              word-wrap: break-word; overflow-wrap: anywhere;
+              background: transparent;
+            }
+            img { max-width: 100% !important; height: auto !important; border-radius: 6px; }
+            table { max-width: 100% !important; }
+            blockquote { margin: 12px 0; padding-left: 12px; border-left: 2.5px solid #cbd5e1; color: #475569; }
+            a { color: #0078D4; }
+            """
+        }
+
+        let darkNormalizerScript: String = renderDark ? """
+        <script>
+        (function() {
+          function parseRgb(str) {
+            if (!str) return null;
+            var m = str.match(/rgba?\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)(?:\\s*,\\s*([\\d.]+))?\\s*\\)/i);
+            if (!m) return null;
+            return { r: +m[1], g: +m[2], b: +m[3], a: m[4] !== undefined ? +m[4] : 1 };
+          }
+          function lum(c) {
+            return (0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b) / 255;
+          }
+          function sat(c) {
+            var mx = Math.max(c.r, c.g, c.b), mn = Math.min(c.r, c.g, c.b);
+            return mx === 0 ? 0 : (mx - mn) / mx;
+          }
+          function hasAuthorDarkMedia() {
+            var styles = document.querySelectorAll('style');
+            for (var i = 0; i < styles.length; i++) {
+              if (/prefers-color-scheme\\s*:\\s*dark/i.test(styles[i].textContent || '')) return true;
+            }
+            return false;
+          }
+          function adaptDomForDark() {
+            if (hasAuthorDarkMedia()) return;
+            var nodes = document.querySelectorAll('body, div, table, tbody, thead, tr, td, th, section, article, main, header, footer, p, span, li, ul, ol, h1, h2, h3, h4, h5, h6, b, strong, em, small, font, blockquote');
+            for (var i = 0; i < nodes.length; i++) {
+              var el = nodes[i];
+              var cs = window.getComputedStyle(el);
+              var bg = parseRgb(cs.backgroundColor);
+              if (bg && bg.a > 0.15) {
+                var bgL = lum(bg), bgS = sat(bg);
+                if (bgL > 0.92 && bgS < 0.12) {
+                  el.style.setProperty('background-color', el === document.body ? 'transparent' : '#101726', 'important');
+                } else if (bgL > 0.82 && bgS < 0.18) {
+                  el.style.setProperty('background-color', '#192338', 'important');
+                }
+              }
+              var bd = parseRgb(cs.borderTopColor);
+              if (bd && bd.a > 0.2 && lum(bd) > 0.78 && sat(bd) < 0.2) {
+                el.style.setProperty('border-color', 'rgba(148, 179, 226, 0.22)', 'important');
+              }
+              var fg = parseRgb(cs.color);
+              if (fg && fg.a > 0.2) {
+                var fgL = lum(fg), fgS = sat(fg);
+                if (fgL < 0.22 && fgS < 0.45) {
+                  el.style.setProperty('color', '#F1F6FD', 'important');
+                } else if (fgL >= 0.22 && fgL < 0.42 && fgS < 0.35) {
+                  el.style.setProperty('color', '#B8C6DC', 'important');
+                }
+              }
+            }
+          }
+          if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', adaptDomForDark);
+          } else {
+            adaptDomForDark();
+          }
+        })();
+        </script>
+        """ : ""
+
         let wrapped = """
         <!doctype html>
         <html>
         <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-        <style>
-          html, body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif; font-size: 15.5px; line-height: 1.58; color: #0f172a; word-wrap: break-word; overflow-wrap: anywhere; background: transparent; }
-          img { max-width: 100% !important; height: auto !important; border-radius: 6px; }
-          table { max-width: 100% !important; }
-          blockquote { margin: 12px 0; padding-left: 12px; border-left: 2.5px solid #cbd5e1; color: #475569; }
-          a { color: #0078D4; }
-        </style>
+        <meta name="color-scheme" content="\(schemeMeta)">
+        <meta name="supported-color-schemes" content="\(schemeMeta)">
+        <style>\(baseCss)</style>
         </head>
-        <body>\(htmlBody)</body>
+        <body>\(htmlBody)\(darkNormalizerScript)</body>
         </html>
         """
-        if context.coordinator.lastLoadedHTML != wrapped {
-            context.coordinator.lastLoadedHTML = wrapped
+        let cacheSignature = "\(renderDark ? "D" : "L")|\(wrapped)"
+        if context.coordinator.lastLoadedHTML != cacheSignature {
+            context.coordinator.lastLoadedHTML = cacheSignature
             uiView.loadHTMLString(wrapped, baseURL: URL(string: "https://mail.viplemail.fr"))
         }
     }
@@ -91,15 +201,21 @@ private struct VipleMailHTMLWebView: UIViewRepresentable {
 
 public struct MessageDetailView: View {
     @EnvironmentObject private var vm: VipleMailViewModel
+    @Environment(\.colorScheme) private var colorScheme
     public let message: VipleMailMessage
 
     @State private var showFullHeaders: Bool = false
     @State private var showPreviousThreadEmails: Bool = false
     @State private var isShowingMoveFolderSheet: Bool = false
+    @State private var forceOriginalLightEmail: Bool = false
     @State private var htmlContentHeight: CGFloat = 220
 
     public init(message: VipleMailMessage) {
         self.message = message
+    }
+
+    private var effectiveRenderHtmlDark: Bool {
+        colorScheme == .dark && vm.adaptHtmlEmailsInDarkMode && !forceOriginalLightEmail
     }
 
     private var currentMessage: VipleMailMessage {
@@ -170,6 +286,22 @@ public struct MessageDetailView: View {
             }
 
             ToolbarItemGroup(placement: .topBarTrailing) {
+                if colorScheme == .dark && hasRichHTML(currentMessage.bodyHtml) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            if vm.adaptHtmlEmailsInDarkMode {
+                                forceOriginalLightEmail.toggle()
+                            } else {
+                                vm.adaptHtmlEmailsInDarkMode = true
+                                forceOriginalLightEmail = false
+                            }
+                        }
+                    } label: {
+                        Image(systemName: effectiveRenderHtmlDark ? "sun.max" : "moon.stars.fill")
+                    }
+                    .accessibilityLabel(effectiveRenderHtmlDark ? "Afficher ce courrier sur fond clair" : "Adapter ce courrier au mode sombre")
+                }
+
                 Button {
                     Task {
                         await vm.performMessageAction(
@@ -581,8 +713,30 @@ public struct MessageDetailView: View {
         VStack(alignment: .leading, spacing: 0) {
             #if canImport(WebKit) && canImport(UIKit)
             if hasRichHTML(msg.bodyHtml) {
-                VipleMailHTMLWebView(htmlBody: msg.bodyHtml, dynamicHeight: $htmlContentHeight)
+                if colorScheme == .dark && !effectiveRenderHtmlDark {
+                    VipleMailHTMLWebView(
+                        htmlBody: msg.bodyHtml,
+                        renderDark: false,
+                        dynamicHeight: $htmlContentHeight
+                    )
                     .frame(height: htmlContentHeight)
+                    .padding(12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color.white)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(VipleMailPalette.border, lineWidth: 1)
+                    )
+                } else {
+                    VipleMailHTMLWebView(
+                        htmlBody: msg.bodyHtml,
+                        renderDark: effectiveRenderHtmlDark,
+                        dynamicHeight: $htmlContentHeight
+                    )
+                    .frame(height: htmlContentHeight)
+                }
             } else {
                 Text(msg.plainBodyText)
                     .font(.system(size: 15.5))
@@ -793,6 +947,8 @@ public struct MessageDetailView: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(VipleMailPalette.background)
             .navigationTitle("Déplacer vers…")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -803,5 +959,6 @@ public struct MessageDetailView: View {
                 }
             }
         }
+        .preferredColorScheme(vm.preferredColorSchemeOverride)
     }
 }

@@ -8,6 +8,7 @@ import UIKit
 #if canImport(UIKit)
 private struct DlpScreenshotShieldRepresentable<Content: View>: UIViewRepresentable {
     let preventScreenshot: Bool
+    let colorScheme: ColorScheme
     let content: Content
 
     func makeUIView(context: Context) -> UIView {
@@ -15,6 +16,7 @@ private struct DlpScreenshotShieldRepresentable<Content: View>: UIViewRepresenta
         wrapper.backgroundColor = .clear
 
         let hostingController = UIHostingController(rootView: content)
+        hostingController.overrideUserInterfaceStyle = colorScheme == .dark ? .dark : .light
         hostingController.view.backgroundColor = .clear
         hostingController.view.translatesAutoresizingMaskIntoConstraints = false
         context.coordinator.hostingController = hostingController
@@ -60,6 +62,7 @@ private struct DlpScreenshotShieldRepresentable<Content: View>: UIViewRepresenta
     }
 
     func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.hostingController?.overrideUserInterfaceStyle = colorScheme == .dark ? .dark : .light
         context.coordinator.hostingController?.rootView = content
     }
 
@@ -83,6 +86,7 @@ public struct SecureMailReaderView: View {
     public let senderVerifiedOrganization: String? // Ex: "Cenelis SA" uniquement si @cenelis.com ou @viplenetwork.com
 
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dismiss) private var dismiss
 
     @State private var volatileSession: VolatileDecryptedEmailSession?
@@ -104,15 +108,16 @@ public struct SecureMailReaderView: View {
 
     public var body: some View {
         ZStack {
-            Color(UIColor.systemBackground).ignoresSafeArea()
+            VipleMailPalette.surface.ignoresSafeArea()
 
             if isLoading {
                 VStack(spacing: 14) {
                     ProgressView()
+                        .tint(VipleMailPalette.primary)
                         .controlSize(.large)
                     Text("Vérification matérielle Secure Enclave & déchiffrement Cenelis MailRTE…")
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(VipleMailPalette.inkSecondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 32)
                 }
@@ -120,18 +125,20 @@ public struct SecureMailReaderView: View {
                 VStack(spacing: 16) {
                     Image(systemName: "lock.trianglebadge.exclamationmark.fill")
                         .font(.system(size: 42))
-                        .foregroundStyle(.red)
+                        .foregroundStyle(VipleMailPalette.danger)
                     Text("Lecture protégée indisponible")
                         .font(.headline)
+                        .foregroundStyle(VipleMailPalette.ink)
                     Text(errorMessage)
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(VipleMailPalette.inkSecondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 28)
                     Button("Réessayer la vérification matérielle") {
                         Task { await performRealtimeDecryption() }
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(VipleMailPalette.primary)
                 }
             } else if let session = volatileSession {
                 protectedReaderBody(session: session)
@@ -142,12 +149,13 @@ public struct SecureMailReaderView: View {
                 VStack(spacing: 12) {
                     Image(systemName: "eye.slash.circle.fill")
                         .font(.system(size: 48))
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(VipleMailPalette.primary)
                     Text("Capture d'écran bloquée par Cenelis MailRTE")
                         .font(.headline)
+                        .foregroundStyle(VipleMailPalette.ink)
                     Text("Désactivez l'enregistrement d'écran ou la recopie vidéo pour consulter ce message protégé.")
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(VipleMailPalette.inkSecondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 32)
                 }
@@ -186,47 +194,53 @@ public struct SecureMailReaderView: View {
                 // Objet déchiffré en RAM
                 Text(session.subjectText)
                     .font(.title3.weight(.semibold))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(VipleMailPalette.ink)
 
                 // En-tête classique du lecteur Viple Mail avec badge sécurité MailRTE dédié
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 6) {
                         Text("De :")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(VipleMailPalette.inkSecondary)
                         Text(session.sender)
                             .fontWeight(.medium)
+                            .foregroundStyle(VipleMailPalette.ink)
                         if let org = senderVerifiedOrganization {
                             Label("Vérifiée : \(org)", systemImage: "checkmark.seal.fill")
                                 .font(.caption.weight(.semibold))
-                                .foregroundStyle(.blue)
+                                .foregroundStyle(VipleMailPalette.primary)
                         }
                     }
                     .font(.subheadline)
 
                     HStack(spacing: 6) {
                         Text("À :")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(VipleMailPalette.inkSecondary)
                         Text(session.recipient)
+                            .foregroundStyle(VipleMailPalette.ink)
                     }
                     .font(.subheadline)
 
                     // Ligne Sécurité : badge vérifié exclusivement affiché dans cette section pour Cenelis MailRTE
                     HStack(spacing: 6) {
                         Text("Sécurité :")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(VipleMailPalette.inkSecondary)
                         Image(systemName: "checkmark.seal.fill")
                             .font(.caption)
-                            .foregroundStyle(.green)
+                            .foregroundStyle(VipleMailPalette.success)
                         Text("Chiffrement Cenelis MailRTE")
                             .font(.caption.weight(.semibold))
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(VipleMailPalette.ink)
                     }
                     .font(.subheadline)
                 }
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(UIColor.secondarySystemBackground))
+                .background(VipleMailPalette.surfaceSubtle)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(VipleMailPalette.border, lineWidth: 1)
+                )
 
                 Divider()
 
@@ -234,12 +248,12 @@ public struct SecureMailReaderView: View {
                 if session.dlpPolicy.preventCopy {
                     Text(Self.stripBasicHtmlIfNeeded(session.bodyText))
                         .font(.body)
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(VipleMailPalette.ink)
                         .textSelection(.disabled)
                 } else {
                     Text(Self.stripBasicHtmlIfNeeded(session.bodyText))
                         .font(.body)
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(VipleMailPalette.ink)
                         .textSelection(.enabled)
                 }
 
@@ -250,23 +264,28 @@ public struct SecureMailReaderView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Pièces jointes chiffrées (\(attachments.count))")
                             .font(.footnote.weight(.semibold))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(VipleMailPalette.inkSecondary)
                         ForEach(attachments, id: \.id) { item in
                             HStack(spacing: 10) {
                                 Image(systemName: "lock.doc.fill")
-                                    .foregroundStyle(.blue)
+                                    .foregroundStyle(VipleMailPalette.primary)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(item.fileName)
                                         .font(.subheadline.weight(.medium))
+                                        .foregroundStyle(VipleMailPalette.ink)
                                     Text("\(item.contentType) • \(ByteCountFormatter.string(fromByteCount: Int64(item.size), countStyle: .file))")
                                         .font(.caption2)
-                                        .foregroundStyle(.secondary)
+                                        .foregroundStyle(VipleMailPalette.inkMuted)
                                 }
                                 Spacer()
                             }
                             .padding(10)
-                            .background(Color(UIColor.secondarySystemBackground))
+                            .background(VipleMailPalette.surfaceSubtle)
                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .stroke(VipleMailPalette.border, lineWidth: 1)
+                            )
                         }
                     }
                 }
@@ -277,6 +296,7 @@ public struct SecureMailReaderView: View {
         #if canImport(UIKit)
         DlpScreenshotShieldRepresentable(
             preventScreenshot: session.dlpPolicy.preventScreenshot,
+            colorScheme: colorScheme,
             content: content
         )
         #else

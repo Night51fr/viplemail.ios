@@ -1,5 +1,8 @@
 import Foundation
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 // MARK: - ViewModel Principal « Viple Mail » (100 % connecté aux serveurs Stalwart mail.viplemail.fr, SSO Viple Live ID & Cenelis Connect)
 
@@ -72,6 +75,44 @@ public final class VipleMailViewModel: ObservableObject {
     @Published public var chatUnreadCount: Int = 0
     @Published public var settings: VipleMailSettings = VipleMailSettings()
     @Published public var lastDiagnosticsPing: VipleMailDiagnosticsPing? = nil
+
+    // Apparence & Mode Sombre (Automatique iOS / Clair / Sombre OLED + Rendu adaptatif des e-mails HTML)
+    @Published public var appearanceMode: VipleMailAppearanceMode = .system {
+        didSet {
+            defaults.set(appearanceMode.rawValue, forKey: savedAppearanceModeKey)
+            applyWindowInterfaceStyle()
+        }
+    }
+    @Published public var adaptHtmlEmailsInDarkMode: Bool = true {
+        didSet {
+            defaults.set(adaptHtmlEmailsInDarkMode, forKey: savedAdaptHtmlDarkModeKey)
+        }
+    }
+
+    public var preferredColorSchemeOverride: ColorScheme? {
+        appearanceMode.preferredColorScheme
+    }
+
+    public func applyWindowInterfaceStyle() {
+        #if canImport(UIKit)
+        let targetStyle: UIUserInterfaceStyle
+        switch appearanceMode {
+        case .system: targetStyle = .unspecified
+        case .light: targetStyle = .light
+        case .dark: targetStyle = .dark
+        }
+        for scene in UIApplication.shared.connectedScenes {
+            guard let windowScene = scene as? UIWindowScene else { continue }
+            for window in windowScene.windows {
+                if window.overrideUserInterfaceStyle != targetStyle {
+                    UIView.transition(with: window, duration: 0.22, options: .transitionCrossDissolve) {
+                        window.overrideUserInterfaceStyle = targetStyle
+                    }
+                }
+            }
+        }
+        #endif
+    }
 
     // Courrier ouvert & Discussion Chat ouverte
     @Published public var activeThreadMessages: [VipleMailMessage] = []
@@ -147,8 +188,18 @@ public final class VipleMailViewModel: ObservableObject {
     private let savedOwnerEmailKey = "viple.mail.ios.savedOwnerEmail.v1"
     private let savedCidKey = "viple.mail.ios.savedCid.v1"
     private let savedTokenKey = "viple.mail.ios.savedToken.v1"
+    private let savedAppearanceModeKey = "viple.mail.ios.appearanceMode.v1"
+    private let savedAdaptHtmlDarkModeKey = "viple.mail.ios.adaptHtmlDarkMode.v1"
 
     public init() {
+        if let rawAppearance = defaults.string(forKey: savedAppearanceModeKey),
+           let parsedAppearance = VipleMailAppearanceMode(rawValue: rawAppearance) {
+            self.appearanceMode = parsedAppearance
+        }
+        if defaults.object(forKey: savedAdaptHtmlDarkModeKey) != nil {
+            self.adaptHtmlEmailsInDarkMode = defaults.bool(forKey: savedAdaptHtmlDarkModeKey)
+        }
+
         let savedEmail = defaults.string(forKey: savedEmailKey)
         let savedCid = defaults.string(forKey: savedCidKey)
         let savedToken = defaults.string(forKey: savedTokenKey)

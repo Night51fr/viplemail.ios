@@ -22,6 +22,7 @@ public struct MailSettingsView: View {
                 if vm.isApprovedCenelisAgent {
                     cenelisAgentMailboxCard
                 }
+                appearanceCustomizationCard
                 externalAccountsCard
                 notificationsControlCard
                 officialMailServersCard
@@ -399,6 +400,138 @@ public struct MailSettingsView: View {
             )
         }
         .vipleMailCard(cornerRadius: 20, padding: 16)
+    }
+
+    // MARK: - Apparence, Thème Clair / Sombre OLED & Rendu des Courriers HTML
+
+    private var appearanceCustomizationCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Label("Apparence & Mode sombre", systemImage: "moon.stars.fill")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(VipleMailPalette.ink)
+
+                Spacer()
+
+                Text(vm.appearanceMode.title.uppercased())
+                    .font(.system(size: 10, weight: .black, design: .rounded))
+                    .foregroundStyle(VipleMailPalette.primary)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 3.5)
+                    .background(Capsule().fill(VipleMailPalette.primary.opacity(0.12)))
+            }
+
+            HStack(spacing: 10) {
+                ForEach(VipleMailAppearanceMode.allCases) { mode in
+                    appearanceModeTile(mode)
+                }
+            }
+
+            Text(vm.appearanceMode.subtitle)
+                .font(.system(size: 12))
+                .foregroundStyle(VipleMailPalette.inkSecondary)
+
+            Divider()
+
+            Toggle(isOn: $vm.adaptHtmlEmailsInDarkMode) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Adapter les courriers HTML au mode sombre")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(VipleMailPalette.ink)
+                    Text("Convertit automatiquement les fonds clairs des e-mails reçus pour un confort nocturne optimal (un bouton ☀️/🌙 reste accessible dans chaque courrier)")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(VipleMailPalette.inkMuted)
+                }
+            }
+        }
+        .vipleMailCard(cornerRadius: 20, padding: 16)
+    }
+
+    private func appearanceModeTile(_ mode: VipleMailAppearanceMode) -> some View {
+        let isSelected = vm.appearanceMode == mode
+        return Button {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.84)) {
+                vm.appearanceMode = mode
+            }
+        } label: {
+            VStack(spacing: 9) {
+                // Aperçu visuel miniature Clair / Sombre / Auto
+                ZStack {
+                    switch mode {
+                    case .light:
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color(red: 0.95, green: 0.97, blue: 1.00))
+                            .overlay(
+                                VStack(alignment: .leading, spacing: 4) {
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .fill(Color(red: 0.00, green: 0.47, blue: 0.83))
+                                        .frame(width: 24, height: 5)
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .fill(Color.white)
+                                        .frame(height: 11)
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .fill(Color.white)
+                                        .frame(height: 11)
+                                }
+                                .padding(7)
+                            )
+                    case .dark:
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color(red: 0.03, green: 0.04, blue: 0.08))
+                            .overlay(
+                                VStack(alignment: .leading, spacing: 4) {
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .fill(Color(red: 0.26, green: 0.82, blue: 1.00))
+                                        .frame(width: 24, height: 5)
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .fill(Color(red: 0.09, green: 0.13, blue: 0.21))
+                                        .frame(height: 11)
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .fill(Color(red: 0.09, green: 0.13, blue: 0.21))
+                                        .frame(height: 11)
+                                }
+                                .padding(7)
+                            )
+                    case .system:
+                        HStack(spacing: 0) {
+                            Color(red: 0.95, green: 0.97, blue: 1.00)
+                            Color(red: 0.03, green: 0.04, blue: 0.08)
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay(
+                            Image(systemName: "circle.lefthalf.filled")
+                                .font(.system(size: 18, weight: .bold))
+                                .foregroundStyle(Color(red: 0.16, green: 0.56, blue: 1.00))
+                        )
+                    }
+                }
+                .frame(height: 46)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(isSelected ? VipleMailPalette.primary : VipleMailPalette.border, lineWidth: 1)
+                )
+
+                HStack(spacing: 4) {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : mode.iconName)
+                        .font(.system(size: 11.5, weight: .bold))
+                    Text(mode.title)
+                        .font(.system(size: 12, weight: isSelected ? .bold : .semibold, design: .rounded))
+                        .lineLimit(1)
+                }
+                .foregroundStyle(isSelected ? VipleMailPalette.primary : VipleMailPalette.inkSecondary)
+            }
+            .padding(9)
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(isSelected ? VipleMailPalette.primary.opacity(0.11) : VipleMailPalette.surfaceSubtle)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(isSelected ? VipleMailPalette.primary : VipleMailPalette.border, lineWidth: isSelected ? 1.5 : 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Comptes E-Mail Externes (Gmail, Outlook, iCloud, Orange, OVH, Pro...)
@@ -814,6 +947,7 @@ public struct MailSettingsView: View {
 
             TextEditor(text: $vm.settings.signatureHtml)
                 .font(.system(size: 13.5))
+                .foregroundStyle(VipleMailPalette.ink)
                 .frame(minHeight: 75)
                 .padding(8)
                 .scrollContentBackground(.hidden)
@@ -837,11 +971,13 @@ public struct MailSettingsView: View {
 
             if vm.settings.vacationEnabled {
                 TextField("Objet de la réponse automatique", text: $vm.settings.vacationSubject)
+                    .foregroundStyle(VipleMailPalette.ink)
                     .padding(11)
                     .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.surfaceSubtle))
 
                 TextEditor(text: $vm.settings.vacationBody)
                     .font(.system(size: 13.5))
+                    .foregroundStyle(VipleMailPalette.ink)
                     .frame(minHeight: 80)
                     .padding(8)
                     .scrollContentBackground(.hidden)
