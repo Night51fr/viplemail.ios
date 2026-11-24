@@ -1,4 +1,5 @@
 import SwiftUI
+import CryptoKit
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -45,7 +46,7 @@ public enum VipleMailAppearanceMode: String, CaseIterable, Identifiable, Codable
     }
 }
 
-// MARK: - Chargeur & Cache Mémoire de Photos de Profil Viple Live ID (@viplemail.fr & @cenelis.com)
+// MARK: - Chargeur & Cache Persistant sur Disque des Logos Expéditeurs (BIMI, Gravatar, Marques & Viple Live ID)
 
 @MainActor
 public final class VipleMailAvatarImageCache {
@@ -53,30 +54,66 @@ public final class VipleMailAvatarImageCache {
 
     #if canImport(UIKit)
     private let cache = NSCache<NSString, UIImage>()
+    private var negativeCacheExpiry: [String: Date] = [:]
+    private var inFlight: [String: Task<UIImage?, Never>] = [:]
     #endif
     private let session: URLSession
     private let delegate = VipleMailTLSSessionDelegate()
+    private let diskDirectory: URL
+
+    private static let positiveDiskTTL: TimeInterval = 14 * 86400 // 14 jours sur disque local iOS
+    private static let negativeDiskTTL: TimeInterval = 24 * 3600  // 24h pour les expéditeurs sans logo
 
     private init() {
         let cfg = URLSessionConfiguration.default
         cfg.timeoutIntervalForRequest = 15
         cfg.requestCachePolicy = .returnCacheDataElseLoad
         self.session = URLSession(configuration: cfg, delegate: delegate, delegateQueue: nil)
+
+        let cachesRoot = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        let dir = cachesRoot.appendingPathComponent("SenderLogos", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        self.diskDirectory = dir
+
+        #if canImport(UIKit)
+        self.cache.countLimit = 400
+        #endif
     }
 
     public static func resolvedAvatarURL(explicitUrl: String?, email: String) -> URL? {
         if let raw = explicitUrl?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+            let fullRaw: String
             if raw.lowercased().hasPrefix("http://") || raw.lowercased().hasPrefix("https://") {
-                return URL(string: raw)
+                fullRaw = raw
+            } else if raw.hasPrefix("/") {
+                fullRaw = "https://identity-v2.viple.digital\(raw)"
+            } else {
+                fullRaw = raw
             }
-            if raw.hasPrefix("/") {
-                return URL(string: "https://identity-v2.viple.digital\(raw)")
+            if fullRaw.contains("/api/mobile/v1/mail/avatar") && !fullRaw.contains("d=") {
+                let sep = fullRaw.contains("?") ? "&" : "?"
+                return URL(string: "\(fullRaw)\(sep)d=404")
             }
+            return URL(string: fullRaw)
         }
         let cleanEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !cleanEmail.isEmpty, cleanEmail.contains("@") else { return nil }
         let encoded = cleanEmail.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? cleanEmail
-        return URL(string: "https://mail.viplemail.fr/api/mobile/v1/mail/avatar?email=\(encoded)")
+        return URL(string: "https://mail.viplemail.fr/api/mobile/v1/mail/avatar?email=\(encoded)&d=404")
+    }
+
+    private static func normalizedSenderKey(explicitUrl: String?, email: String) -> String {
+        let cleanEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !cleanEmail.isEmpty {
+            return "sender:\(cleanEmail)"
+        }
+        return "url:\((explicitUrl ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased())"
+    }
+
+    private static func sha256Hex(_ value: String) -> String {
+        let digest = SHA256.hash(data: Data(value.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
     }
 
     #if canImport(UIKit)
@@ -84,26 +121,102 @@ public final class VipleMailAvatarImageCache {
         cache.object(forKey: key as NSString)
     }
 
+    public func cachedImageSynchronously(explicitUrl: String?, email: String) -> UIImage? {
+        let logicalKey = Self.normalizedSenderKey(explicitUrl: explicitUrl, email: email)
+        if let mem = cache.object(forKey: logicalKey as NSString) {
+            return mem
+        }
+        if let negExp = negativeCacheExpiry[logicalKey], negExp > Date() {
+            return nil
+        }
+
+        let hash = Self.sha256Hex(logicalKey)
+        let pngURL = diskDirectory.appendingPathComponent("\(hash).png")
+        let fm = FileManager.default
+        if fm.fileExists(atPath: pngURL.path),
+           let attrs = try? fm.attributesOfItem(atPath: pngURL.path),
+           let modDate = attrs[.modificationDate] as? Date,
+           Date().timeIntervalSince(modDate) < Self.positiveDiskTTL,
+           let data = try? Data(contentsOf: pngURL),
+           let img = UIImage(data: data) {
+            cache.setObject(img, forKey: logicalKey as NSString)
+            return img
+        }
+        return nil
+    }
+
     public func loadImage(explicitUrl: String?, email: String) async -> UIImage? {
         guard let url = Self.resolvedAvatarURL(explicitUrl: explicitUrl, email: email) else {
             return nil
         }
-        let cacheKey = "\(email.lowercased())|\(url.absoluteString)" as NSString
-        if let existing = cache.object(forKey: cacheKey) {
+
+        let logicalKey = Self.normalizedSenderKey(explicitUrl: explicitUrl, email: email)
+        if let existing = cache.object(forKey: logicalKey as NSString) {
             return existing
         }
-        do {
-            var req = URLRequest(url: url)
-            req.setValue("image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
-            let (data, response) = try await session.data(for: req)
-            if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
-               data.count > 120,
-               let img = UIImage(data: data) {
-                cache.setObject(img, forKey: cacheKey)
-                return img
-            }
-        } catch { }
-        return nil
+        if let negExp = negativeCacheExpiry[logicalKey], negExp > Date() {
+            return nil
+        }
+
+        let hash = Self.sha256Hex(logicalKey)
+        let pngURL = diskDirectory.appendingPathComponent("\(hash).png")
+        let noneURL = diskDirectory.appendingPathComponent("\(hash).none")
+        let fm = FileManager.default
+
+        if fm.fileExists(atPath: pngURL.path),
+           let attrs = try? fm.attributesOfItem(atPath: pngURL.path),
+           let modDate = attrs[.modificationDate] as? Date,
+           Date().timeIntervalSince(modDate) < Self.positiveDiskTTL,
+           let diskData = try? Data(contentsOf: pngURL),
+           let diskImg = UIImage(data: diskData) {
+            cache.setObject(diskImg, forKey: logicalKey as NSString)
+            return diskImg
+        }
+
+        if fm.fileExists(atPath: noneURL.path),
+           let attrs = try? fm.attributesOfItem(atPath: noneURL.path),
+           let modDate = attrs[.modificationDate] as? Date,
+           Date().timeIntervalSince(modDate) < Self.negativeDiskTTL {
+            negativeCacheExpiry[logicalKey] = modDate.addingTimeInterval(Self.negativeDiskTTL)
+            return nil
+        }
+
+        if let running = inFlight[logicalKey] {
+            return await running.value
+        }
+
+        let sessionRef = self.session
+        let fetchTask = Task<UIImage?, Never> { [weak self] in
+            do {
+                var req = URLRequest(url: url)
+                req.setValue("image/png,image/jpeg,image/*;q=0.8", forHTTPHeaderField: "Accept")
+                let (data, response) = try await sessionRef.data(for: req)
+                if let http = response as? HTTPURLResponse {
+                    if (200...299).contains(http.statusCode),
+                       data.count > 80,
+                       let img = UIImage(data: data) {
+                        if let normalizedPng = img.pngData() {
+                            try? normalizedPng.write(to: pngURL, options: .atomic)
+                        } else {
+                            try? data.write(to: pngURL, options: .atomic)
+                        }
+                        try? FileManager.default.removeItem(at: noneURL)
+                        self?.cache.setObject(img, forKey: logicalKey as NSString)
+                        return img
+                    } else if http.statusCode == 404 || http.statusCode == 204 {
+                        try? Data("0".utf8).write(to: noneURL, options: .atomic)
+                        self?.negativeCacheExpiry[logicalKey] = Date().addingTimeInterval(Self.negativeDiskTTL)
+                        return nil
+                    }
+                }
+            } catch { }
+            return nil
+        }
+
+        inFlight[logicalKey] = fetchTask
+        let result = await fetchTask.value
+        inFlight.removeValue(forKey: logicalKey)
+        return result
     }
     #endif
 }
@@ -662,7 +775,7 @@ public struct VipleMailAvatarView: View {
                     .foregroundStyle(.white)
 
                 #if canImport(UIKit)
-                if let img = loadedImage {
+                if let img = loadedImage ?? VipleMailAvatarImageCache.shared.cachedImageSynchronously(explicitUrl: avatarUrl, email: email) {
                     Image(uiImage: img)
                         .resizable()
                         .scaledToFill()
