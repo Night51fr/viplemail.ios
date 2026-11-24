@@ -1,4 +1,5 @@
 import Foundation
+import Security
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -738,6 +739,35 @@ public final class VipleMailAPIClient {
         ])
     }
 
+    private static func detectAppleTeamIdFromKeychain() -> String {
+        let account = "viple.apns.teamid.probe"
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "com.viplenetwork.apns.probe",
+            kSecAttrAccount as String: account,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var result: CFTypeRef?
+        var status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound {
+            var addQuery = query
+            addQuery.removeValue(forKey: kSecMatchLimit as String)
+            addQuery[kSecValueData as String] = Data("1".utf8)
+            addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            status = SecItemAdd(addQuery as CFDictionary, &result)
+        }
+        if status == errSecSuccess,
+           let attrs = result as? [String: Any],
+           let group = attrs[kSecAttrAccessGroup as String] as? String {
+            let prefix = group.split(separator: ".").first.map(String.init) ?? ""
+            if prefix.count == 10 {
+                return prefix
+            }
+        }
+        return ""
+    }
+
     public func registerDeviceForPush(
         email: String,
         cid: String?,
@@ -759,8 +789,9 @@ public final class VipleMailAPIClient {
             "vendorId": devId,
             "apnsToken": apnsToken ?? "",
             "apnsEnvironment": apnsEnv,
+            "appleTeamId": Self.detectAppleTeamIdFromKeychain(),
             "platform": "iOS",
-            "appVersion": "2026.11.16",
+            "appVersion": "2026.11.17",
             "notificationsEnabled": notificationsEnabled,
             "vipOnly": vipOnly
         ]
