@@ -40,18 +40,56 @@ public struct MailFoldersView: View {
 
     private var connectedMailboxesSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
+            HStack(spacing: 10) {
                 Text("MES BOÎTES AUX LETTRES")
                     .font(.system(size: 11.5, weight: .black, design: .rounded))
                     .foregroundStyle(VipleMailPalette.inkMuted)
                 Spacer()
                 Button {
+                    vm.isShowingGuestAccessSheet = true
+                } label: {
+                    Label("Accès invité", systemImage: "key.radiowaves.forward.fill")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundStyle(VipleMailPalette.primary)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(VipleMailPalette.primary.opacity(0.11)))
+                }
+                Button {
                     vm.presentAddExternalAccountSheet()
                 } label: {
-                    Label("Ajouter une boîte externe", systemImage: "plus.circle.fill")
-                        .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                    Label("Externe", systemImage: "plus.circle.fill")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
                         .foregroundStyle(VipleMailPalette.primary)
                 }
+            }
+
+            if !vm.sharedGuestMailboxes.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "key.fill")
+                            .font(.system(size: 10.5, weight: .bold))
+                            .foregroundStyle(VipleMailPalette.primary)
+                        Text("BOÎTES PARTAGÉES AVEC MOI (ACCÈS INVITÉ)")
+                            .font(.system(size: 10.5, weight: .black, design: .rounded))
+                            .foregroundStyle(VipleMailPalette.primary)
+                        Spacer()
+                    }
+                    .padding(.top, 2)
+
+                    ForEach(vm.sharedGuestMailboxes) { grant in
+                        SharedGuestMailboxRowView(
+                            grant: grant,
+                            isActive: vm.isGuestMailboxActive && vm.currentEmail.lowercased() == grant.ownerMailbox.lowercased()
+                        ) {
+                            Task {
+                                vm.selectedTab = 0
+                                await vm.switchActiveMailbox(to: grant.ownerMailbox)
+                            }
+                        }
+                    }
+                }
+                .padding(.bottom, 4)
             }
 
             VStack(spacing: 8) {

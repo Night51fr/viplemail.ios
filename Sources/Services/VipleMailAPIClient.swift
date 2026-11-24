@@ -25,7 +25,7 @@ public final class VipleMailTLSSessionDelegate: NSObject, URLSessionDelegate, Se
 @MainActor
 public final class VipleMailAPIClient {
     public static let shared = VipleMailAPIClient()
-    public static let clientVersion = "2026.11.20"
+    public static let clientVersion = "2026.11.21"
 
     public let primaryBaseURL = "https://mail.viplemail.fr/api/mobile/v1/mail"
     public let fallbackBaseURL = "https://viplemail.fr/api/mobile/v1/mail"
@@ -1030,5 +1030,101 @@ public final class VipleMailAPIClient {
             items.append(URLQueryItem(name: "cid", value: cid))
         }
         return try await getJSON("/security/blocked-senders", queryItems: items)
+    }
+
+    // MARK: - 7. Accès Invité Temporaire (1h, 8h, 24h, 48h) & Liens Directs Compatibles iMessage
+
+    public func fetchGuestMailboxAccessList(
+        email: String,
+        cid: String?
+    ) async throws -> GuestMailboxListResponse {
+        var items: [URLQueryItem] = [URLQueryItem(name: "email", value: email)]
+        if let cid, !cid.isEmpty {
+            items.append(URLQueryItem(name: "cid", value: cid))
+        }
+        return try await getJSON("/guest-access/list", queryItems: items)
+    }
+
+    public func createGuestMailboxGrant(
+        ownerEmail: String,
+        cid: String?,
+        mailbox: String,
+        durationHours: Int,
+        guestEmail: String?,
+        allowSend: Bool,
+        labelNote: String? = nil
+    ) async throws -> GuestMailboxCreateResponse {
+        var body: [String: Any] = [
+            "ownerEmail": ownerEmail,
+            "email": ownerEmail,
+            "cid": cid ?? "",
+            "mailbox": mailbox,
+            "durationHours": durationHours,
+            "allowSend": allowSend
+        ]
+        if let ge = guestEmail?.trimmingCharacters(in: .whitespacesAndNewlines), !ge.isEmpty {
+            body["guestEmail"] = ge
+        }
+        if let note = labelNote?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
+            body["labelNote"] = note
+        }
+        return try await postJSON("/guest-access/create", body: body)
+    }
+
+    public func previewGuestMailboxGrant(token: String) async throws -> GuestMailboxClaimResponse {
+        return try await getJSON("/guest-access/preview", queryItems: [
+            URLQueryItem(name: "token", value: token)
+        ])
+    }
+
+    public func claimGuestMailboxGrant(
+        token: String,
+        email: String,
+        cid: String?
+    ) async throws -> GuestMailboxClaimResponse {
+        return try await postJSON("/guest-access/claim", body: [
+            "token": token,
+            "email": email,
+            "cid": cid ?? ""
+        ])
+    }
+
+    public func revokeGuestMailboxGrant(
+        grantId: String,
+        email: String,
+        cid: String?
+    ) async throws -> GuestMailboxRevokeResponse {
+        return try await postJSON("/guest-access/revoke", body: [
+            "grantId": grantId,
+            "email": email,
+            "cid": cid ?? ""
+        ])
+    }
+
+    public func createDirectMailIMessageLink(
+        messageId: String,
+        email: String,
+        cid: String?
+    ) async throws -> DirectMailLinkCreateResponse {
+        return try await postJSON("/imessage/create-mail-link", body: [
+            "messageId": messageId,
+            "email": email,
+            "cid": cid ?? ""
+        ])
+    }
+
+    public func resolveDirectMailIMessageLink(
+        token: String,
+        email: String,
+        cid: String?
+    ) async throws -> DirectMailLinkResolveResponse {
+        var items: [URLQueryItem] = [
+            URLQueryItem(name: "token", value: token),
+            URLQueryItem(name: "email", value: email)
+        ]
+        if let cid, !cid.isEmpty {
+            items.append(URLQueryItem(name: "cid", value: cid))
+        }
+        return try await getJSON("/imessage/resolve-mail-link", queryItems: items)
     }
 }

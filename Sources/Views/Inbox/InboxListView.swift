@@ -14,6 +14,20 @@ public struct InboxListView: View {
         VStack(spacing: 0) {
             folderAndSearchHeader
 
+            if vm.isGuestMailboxActive, let activeGrant = vm.activeGuestGrant, !vm.isSelectionMode {
+                ActiveGuestMailboxBannerView(grant: activeGrant)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 10)
+                    .padding(.bottom, 4)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            } else if !vm.sharedGuestMailboxes.isEmpty && vm.activeFolderId == "Inbox" && vm.searchQuery.isEmpty && !vm.isSelectionMode {
+                AvailableSharedMailboxesStripView()
+                    .padding(.horizontal, 14)
+                    .padding(.top, 10)
+                    .padding(.bottom, 4)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
             if vm.shouldShowCenelisInboxProposalBanner && vm.activeFolderId == "Inbox" && vm.searchQuery.isEmpty && !vm.isSelectionMode {
                 cenelisAgentProposalBanner
                     .padding(.horizontal, 14)
@@ -488,6 +502,15 @@ public struct InboxListView: View {
                 vm.presentComposer(.forward(msg))
             } label: {
                 Label("Transférer", systemImage: "arrowshape.turn.up.right.fill")
+            }
+            if !msg.isLockedByCenelisPin {
+                Button {
+                    Task {
+                        await vm.shareMessageViaIMessage(msg)
+                    }
+                } label: {
+                    Label("Envoyer le lien direct par iMessage", systemImage: "message.badge.filled.fill")
+                }
             }
             Divider()
             Button {

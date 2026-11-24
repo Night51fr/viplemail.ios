@@ -82,6 +82,19 @@ public final class VipleMailViewModel: ObservableObject {
     @Published public var blockedSenders: [String] = []
     @Published public var isDeletingAccount: Bool = false
 
+    // Accès Invité Temporaire (1h, 8h, 24h, 48h) & Intégration iMessage
+    @Published public var sharedGuestMailboxes: [GuestMailboxGrant] = []
+    @Published public var outgoingGuestGrants: [GuestMailboxGrant] = []
+    @Published public var isGuestMailboxActive: Bool = false
+    @Published public var activeGuestGrant: GuestMailboxGrant? = nil
+    @Published public var isShowingGuestAccessSheet: Bool = false
+    @Published public var activeIMessagePayload: IMessageComposePayload? = nil
+    @Published public var lastSentDirectMailLink: DirectMailShareLink? = nil
+    @Published public var pendingGuestClaimToken: String? = nil
+    @Published public var pendingDirectMailToken: String? = nil
+    @Published public var isCreatingIMessageLink: Bool = false
+    @Published public var isProcessingGuestAction: Bool = false
+
     // Apparence & Mode Sombre (Automatique iOS / Clair / Sombre OLED + Rendu adaptatif des e-mails HTML)
     @Published public var appearanceMode: VipleMailAppearanceMode = .system {
         didSet {
@@ -257,13 +270,18 @@ public final class VipleMailViewModel: ObservableObject {
         return cur == "__all__" ? "" : cur
     }
 
-    /// Boîtes hébergées Viple / Cenelis rattachées au compte
+    /// Boîtes hébergées Viple / Cenelis rattachées au compte (hors boîtes partagées en mode invité temporaire)
     public var hostedMailboxes: [String] {
         let extSet = Set(externalAccounts.map { $0.email.lowercased() })
+        let guestSet = Set(sharedGuestMailboxes.map { $0.ownerMailbox.lowercased() })
+        let activeGuestLower = isGuestMailboxActive ? activeMailboxAddress.lowercased() : ""
         let merged = deduplicatedMailboxes(
             [currentUser?.cenelisMailAddress, currentUser?.vipleMailAddress]
             + availableMailboxes.map { Optional($0) }
-        ).filter { !extSet.contains($0.lowercased()) && $0.lowercased() != "__all__" }
+        ).filter {
+            let low = $0.lowercased()
+            return !extSet.contains(low) && !guestSet.contains(low) && low != activeGuestLower && low != "__all__"
+        }
         if !merged.isEmpty { return merged }
         let p = primaryHostedEmail
         return p.isEmpty ? [] : [p]
@@ -317,9 +335,15 @@ public final class VipleMailViewModel: ObservableObject {
         return "viple.mail.ios.dismissedCenelisBanner.\(norm.isEmpty ? "default" : norm)"
     }
 
-    /// Boîtes pouvant émettre des courriers (toutes les boîtes Viple/Cenelis + les boîtes externes ayant SMTP activé)
+    /// Boîtes pouvant émettre des courriers (toutes les boîtes Viple/Cenelis + boîtes externes SMTP + boîte invitée si autorisée)
     public var sendCapableMailboxes: [String] {
         var result: [String] = []
+        if isGuestMailboxActive, let grant = activeGuestGrant, grant.allowSend, !grant.isExpired() {
+            let gm = grant.ownerMailbox.lowercased()
+            if !gm.isEmpty {
+                result.append(gm)
+            }
+        }
         for h in hostedMailboxes where !result.contains(h.lowercased()) {
             result.append(h.lowercased())
         }
@@ -336,6 +360,12 @@ public final class VipleMailViewModel: ObservableObject {
     public var defaultSendingMailbox: String {
         let cur = currentEmail.lowercased()
         if isUnifiedInboxActive || cur == "__all__" || cur.isEmpty {
+            return primaryHostedEmail
+        }
+        if isGuestMailboxActive {
+            if let grant = activeGuestGrant, grant.allowSend, !grant.isExpired() {
+                return grant.ownerMailbox.lowercased()
+            }
             return primaryHostedEmail
         }
         if let ext = externalAccounts.first(where: { $0.email.lowercased() == cur }) {
@@ -524,12 +554,20 @@ public final class VipleMailViewModel: ObservableObject {
                 self.isApprovedCenelisAgent = approvedCenelis
                 self.isUnifiedInboxActive = unified
                 self.isExternalMailboxActive = (res.isExternalMailbox == true)
+                self.isGuestMailboxActive = (res.isGuestMailbox == true)
+                self.activeGuestGrant = res.activeGuestGrant
                 self.activeExternalProviderName = res.externalProviderName
                 self.activeMailboxAddress = resolvedMailbox
                 self.mailboxQuota = res.mailbox
                 self.folders = res.folders ?? []
                 self.messages = res.messages ?? []
                 self.contacts = res.contacts ?? []
+                if let srvGuests = res.sharedGuestMailboxes {
+                    self.sharedGuestMailboxes = srvGuests.filter { !$0.isExpired() }
+                }
+                if let srvOutGuests = res.outgoingGuestGrants {
+                    self.outgoingGuestGrants = srvOutGuests.filter { !$0.isExpired() }
+                }
                 if let srvExternals = res.externalAccounts {
                     self.externalAccounts = srvExternals
                 }
@@ -542,13 +580,14 @@ public final class VipleMailViewModel: ObservableObject {
                     self.chatUnreadCount = self.chatSessions.reduce(0) { $0 + $1.unreadCount }
                 }
                 let extEmails = self.externalAccounts.map { Optional($0.email) }
+                let ownActive = (unified || self.isGuestMailboxActive) ? nil : resolvedMailbox
                 if let srvMailboxes = res.availableMailboxes, !srvMailboxes.isEmpty {
                     self.availableMailboxes = deduplicatedMailboxes(
-                        srvMailboxes.map { Optional($0) } + [unified ? nil : resolvedMailbox, user.vipleMailAddress, user.cenelisMailAddress] + extEmails
+                        srvMailboxes.map { Optional($0) } + [ownActive, user.vipleMailAddress, user.cenelisMailAddress] + extEmails
                     )
                 } else {
                     self.availableMailboxes = deduplicatedMailboxes(
-                        [unified ? nil : resolvedMailbox, user.vipleMailAddress, user.cenelisMailAddress] + extEmails
+                        [ownActive, user.vipleMailAddress, user.cenelisMailAddress] + extEmails
                     )
                 }
                 if let srvSettings = res.settings {
@@ -572,6 +611,14 @@ public final class VipleMailViewModel: ObservableObject {
                 if let pendingId = defaults.string(forKey: "viple.mail.ios.pendingOpenMsgId"), !pendingId.isEmpty {
                     defaults.removeObject(forKey: "viple.mail.ios.pendingOpenMsgId")
                     await openMessageByIdFromNotification(pendingId, presentReplyComposer: false)
+                }
+                if let pendingGuest = pendingGuestClaimToken, !pendingGuest.isEmpty {
+                    pendingGuestClaimToken = nil
+                    await claimAndOpenGuestMailboxFromToken(pendingGuest)
+                }
+                if let pendingMail = pendingDirectMailToken, !pendingMail.isEmpty {
+                    pendingDirectMailToken = nil
+                    await openDirectMailFromToken(pendingMail)
                 }
             } else {
                 self.isAuthenticated = false
@@ -617,8 +664,18 @@ public final class VipleMailViewModel: ObservableObject {
             if let extList = res.externalAccounts {
                 self.externalAccounts = extList
             }
+            if let srvGuests = res.sharedGuestMailboxes {
+                self.sharedGuestMailboxes = srvGuests.filter { !$0.isExpired() }
+            }
+            if let srvOutGuests = res.outgoingGuestGrants {
+                self.outgoingGuestGrants = srvOutGuests.filter { !$0.isExpired() }
+            }
+            let guestActive = (res.isGuestMailbox == true)
+            self.isGuestMailboxActive = guestActive
+            self.activeGuestGrant = res.activeGuestGrant
             if let list = res.availableMailboxes, !list.isEmpty {
-                self.availableMailboxes = deduplicatedMailboxes(list.map { Optional($0) } + [switchedAddress == "__all__" ? nil : switchedAddress])
+                let extraOwn = (switchedAddress == "__all__" || guestActive) ? nil : switchedAddress
+                self.availableMailboxes = deduplicatedMailboxes(list.map { Optional($0) } + [extraOwn])
             }
             self.isUnifiedInboxActive = (res.isUnifiedInbox == true) || (switchedAddress == "__all__")
             self.isExternalMailboxActive = (res.isExternalMailbox == true)
@@ -983,6 +1040,13 @@ public final class VipleMailViewModel: ObservableObject {
         availableMailboxes = []
         externalAccounts = []
         connectedDevices = []
+        sharedGuestMailboxes = []
+        outgoingGuestGrants = []
+        isGuestMailboxActive = false
+        activeGuestGrant = nil
+        isShowingGuestAccessSheet = false
+        activeIMessagePayload = nil
+        lastSentDirectMailLink = nil
         isExternalMailboxActive = false
         activeExternalProviderName = nil
         isUnifiedInboxActive = false
@@ -1383,8 +1447,13 @@ public final class VipleMailViewModel: ObservableObject {
         if let draftId, !draftId.isEmpty { payload["draftId"] = draftId }
 
         do {
-            let res = try await VipleMailAPIClient.shared.postRaw("/send", body: payload)
-            let msg = (res["message"] as? String) ?? (isDraft ? "Brouillon enregistré." : "Courrier envoyé !")
+            let sendRes: VipleMailSendResponse = try await VipleMailAPIClient.shared.postJSON("/send", body: payload)
+            guard sendRes.ok else {
+                showToast(sendRes.error ?? "Impossible d'envoyer ce courrier.")
+                return false
+            }
+            self.lastSentDirectMailLink = sendRes.directMailLink
+            let msg = sendRes.message ?? (isDraft ? "Brouillon enregistré." : "Courrier envoyé !")
             showToast(msg)
             await refreshBootstrap()
             return true
@@ -2147,6 +2216,327 @@ public final class VipleMailViewModel: ObservableObject {
                 self.blockedSenders.removeAll { $0.lowercased() == target }
             }
             showToast(res.message ?? "\(target) a été débloqué.")
+        } catch {
+            showToast(error.localizedDescription)
+        }
+    }
+
+    // MARK: - 9. Accès Invité Temporaire (1h, 8h, 24h, 48h) & Intégration iMessage
+
+    public func presentIMessageComposer(
+        recipients: [String] = [],
+        body: String,
+        shareUrl: String? = nil,
+        subjectLabel: String? = nil
+    ) {
+        self.activeIMessagePayload = IMessageComposePayload(
+            recipients: recipients,
+            body: body,
+            shareUrl: shareUrl,
+            subjectLabel: subjectLabel
+        )
+    }
+
+    /// Résout le meilleur destinataire iMessage (numéro de téléphone enregistré dans Contacts Viple Mail, sinon vide pour laisser l'utilisateur choisir dans Messages).
+    public func preferredIMessageRecipients(for rawEmails: String) -> [String] {
+        let emails = rawEmails
+            .split(whereSeparator: { $0 == "," || $0 == ";" })
+            .map { part -> String in
+                let trimmed = String(part).trimmingCharacters(in: .whitespacesAndNewlines)
+                if let open = trimmed.firstIndex(of: "<"),
+                   let close = trimmed.firstIndex(of: ">"),
+                   open < close {
+                    return String(trimmed[trimmed.index(after: open)..<close]).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                }
+                return trimmed.lowercased()
+            }
+            .filter { !$0.isEmpty }
+
+        var phones: [String] = []
+        for em in emails {
+            if let match = contacts.first(where: { $0.contactEmail.lowercased() == em }) {
+                let ph = match.phone.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !ph.isEmpty && !phones.contains(ph) {
+                    phones.append(ph)
+                }
+            }
+        }
+        return phones
+    }
+
+    public func shareMessageViaIMessage(_ message: VipleMailMessage) async {
+        guard !isCreatingIMessageLink else { return }
+        if message.isLockedByCenelisPin {
+            showToast("Ce courrier interne protégé par code PIN Cenelis Connect ne peut pas être partagé par lien externe.")
+            return
+        }
+        isCreatingIMessageLink = true
+        defer { isCreatingIMessageLink = false }
+
+        let mbx = message.effectiveMailboxEmail(fallback: primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail)
+        do {
+            let res = try await VipleMailAPIClient.shared.createDirectMailIMessageLink(
+                messageId: message.id,
+                email: mbx,
+                cid: currentCid
+            )
+            guard res.ok, let shareUrl = res.shareUrl ?? res.directMailLink?.shareUrl, !shareUrl.isEmpty else {
+                showToast(res.error ?? "Impossible de générer le lien direct iMessage.")
+                return
+            }
+            let text = res.imessageText
+                ?? res.directMailLink?.imessagePreviewText
+                ?? "✉️ Je t'ai envoyé un courrier sur Viple Mail (« \(message.subject) »). Ouvre-le directement ici :\n\(shareUrl)"
+            let targetEmail = message.senderEmail.lowercased() == mbx.lowercased()
+                ? message.recipientEmail
+                : message.senderEmail
+            let recipients = preferredIMessageRecipients(for: targetEmail)
+            presentIMessageComposer(
+                recipients: recipients,
+                body: text,
+                shareUrl: shareUrl,
+                subjectLabel: message.subject
+            )
+        } catch {
+            showToast(error.localizedDescription)
+        }
+    }
+
+    public func refreshGuestAccessGrants(silent: Bool = true) async {
+        let owner = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
+        guard !owner.isEmpty, owner != "__all__" else { return }
+        do {
+            let res = try await VipleMailAPIClient.shared.fetchGuestMailboxAccessList(
+                email: owner,
+                cid: currentCid
+            )
+            if res.ok {
+                self.sharedGuestMailboxes = (res.sharedGuestMailboxes ?? []).filter { !$0.isExpired() }
+                self.outgoingGuestGrants = (res.outgoingGuestGrants ?? []).filter { !$0.isExpired() }
+            } else if !silent, let err = res.error {
+                showToast(err)
+            }
+        } catch {
+            if !silent {
+                showToast(error.localizedDescription)
+            }
+        }
+    }
+
+    public func createGuestAccessGrant(
+        mailbox: String,
+        durationHours: Int,
+        guestEmail: String?,
+        allowSend: Bool,
+        labelNote: String? = nil
+    ) async -> GuestMailboxCreateResponse? {
+        let owner = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
+        guard !owner.isEmpty, owner != "__all__" else {
+            showToast("Aucune boîte hébergée principale détectée.")
+            return nil
+        }
+        isProcessingGuestAction = true
+        defer { isProcessingGuestAction = false }
+
+        do {
+            let res = try await VipleMailAPIClient.shared.createGuestMailboxGrant(
+                ownerEmail: owner,
+                cid: currentCid,
+                mailbox: mailbox,
+                durationHours: durationHours,
+                guestEmail: guestEmail,
+                allowSend: allowSend,
+                labelNote: labelNote
+            )
+            guard res.ok else {
+                showToast(res.error ?? "Impossible de créer l'accès invité.")
+                return nil
+            }
+            if let out = res.outgoingGuestGrants {
+                self.outgoingGuestGrants = out.filter { !$0.isExpired() }
+            } else {
+                await refreshGuestAccessGrants(silent: true)
+            }
+            if let msg = res.message {
+                showToast(msg)
+            }
+            return res
+        } catch {
+            showToast(error.localizedDescription)
+            return nil
+        }
+    }
+
+    @discardableResult
+    public func revokeGuestAccessGrant(_ grantId: String) async -> Bool {
+        let owner = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
+        guard !owner.isEmpty, owner != "__all__" else { return false }
+        isProcessingGuestAction = true
+        defer { isProcessingGuestAction = false }
+
+        do {
+            let res = try await VipleMailAPIClient.shared.revokeGuestMailboxGrant(
+                grantId: grantId,
+                email: owner,
+                cid: currentCid
+            )
+            guard res.ok else {
+                showToast(res.error ?? "Impossible de révoquer cet accès invité.")
+                return false
+            }
+            if let inc = res.sharedGuestMailboxes {
+                self.sharedGuestMailboxes = inc.filter { !$0.isExpired() }
+            }
+            if let out = res.outgoingGuestGrants {
+                self.outgoingGuestGrants = out.filter { !$0.isExpired() }
+            }
+            if isGuestMailboxActive,
+               let revokedMbx = res.revokedMailbox?.lowercased(),
+               currentEmail.lowercased() == revokedMbx {
+                let fallback = primaryHostedEmail
+                if !fallback.isEmpty {
+                    await switchActiveMailbox(to: fallback)
+                }
+            }
+            showToast(res.message ?? "Accès invité révoqué.")
+            return true
+        } catch {
+            showToast(error.localizedDescription)
+            return false
+        }
+    }
+
+    public func pruneAndExitExpiredGuestMailboxes() {
+        let now = Date()
+        let beforeCount = sharedGuestMailboxes.count
+        sharedGuestMailboxes.removeAll { $0.isExpired(at: now) }
+        outgoingGuestGrants.removeAll { $0.isExpired(at: now) }
+
+        if isGuestMailboxActive {
+            let activeExpired = activeGuestGrant?.isExpired(at: now) ?? !sharedGuestMailboxes.contains(where: {
+                $0.ownerMailbox.lowercased() == currentEmail.lowercased()
+            })
+            if activeExpired {
+                let expiredMbx = currentEmail
+                isGuestMailboxActive = false
+                activeGuestGrant = nil
+                let fallback = primaryHostedEmail
+                if !fallback.isEmpty {
+                    Task {
+                        await switchActiveMailbox(to: fallback)
+                        showToast("⏱ L'accès invité temporaire à \(expiredMbx) a expiré.")
+                    }
+                }
+            }
+        } else if sharedGuestMailboxes.count < beforeCount {
+            showToast("⏱ Un accès invité temporaire à une boîte partagée a expiré.")
+        }
+    }
+
+    public func handleIncomingURL(_ url: URL) async {
+        let scheme = (url.scheme ?? "").lowercased()
+        let host = (url.host ?? "").lowercased()
+        let pathParts = url.pathComponents.filter { $0 != "/" && !$0.isEmpty }
+
+        var guestToken: String? = nil
+        var mailToken: String? = nil
+
+        if scheme == "viplemail" {
+            if host == "guest", let first = pathParts.first {
+                guestToken = first
+            } else if host == "mail", let first = pathParts.first {
+                mailToken = first
+            } else if let comps = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+                if host == "open-shared-mail" {
+                    mailToken = comps.queryItems?.first(where: { $0.name == "token" })?.value
+                } else if host == "claim-guest" {
+                    guestToken = comps.queryItems?.first(where: { $0.name == "token" })?.value
+                }
+            }
+        } else if scheme == "https" || scheme == "http" {
+            if pathParts.count >= 2 && pathParts[0].lowercased() == "guest" {
+                guestToken = pathParts[1]
+            } else if pathParts.count >= 2 && pathParts[0].lowercased() == "m" {
+                mailToken = pathParts[1]
+            } else if let comps = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+                guestToken = comps.queryItems?.first(where: { $0.name == "claimGuestToken" })?.value
+                mailToken = comps.queryItems?.first(where: { $0.name == "openMailToken" })?.value
+            }
+        }
+
+        if let gt = guestToken?.trimmingCharacters(in: .whitespacesAndNewlines), !gt.isEmpty {
+            if isAuthenticated && !primaryHostedEmail.isEmpty {
+                await claimAndOpenGuestMailboxFromToken(gt)
+            } else {
+                pendingGuestClaimToken = gt
+                showToast("Connectez-vous à votre Viple Live ID pour activer la boîte partagée.")
+            }
+        } else if let mt = mailToken?.trimmingCharacters(in: .whitespacesAndNewlines), !mt.isEmpty {
+            if isAuthenticated && !primaryHostedEmail.isEmpty {
+                await openDirectMailFromToken(mt)
+            } else {
+                pendingDirectMailToken = mt
+                showToast("Connectez-vous à Viple Mail pour ouvrir directement ce courrier.")
+            }
+        }
+    }
+
+    public func claimAndOpenGuestMailboxFromToken(_ token: String) async {
+        let owner = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
+        guard !owner.isEmpty, owner != "__all__" else {
+            pendingGuestClaimToken = token
+            return
+        }
+        do {
+            let res = try await VipleMailAPIClient.shared.claimGuestMailboxGrant(
+                token: token,
+                email: owner,
+                cid: currentCid
+            )
+            guard res.ok, let targetMbx = res.mailbox ?? res.grant?.ownerMailbox, !targetMbx.isEmpty else {
+                showToast(res.error ?? "Cette invitation d'accès temporaire a expiré.")
+                return
+            }
+            if let inc = res.sharedGuestMailboxes {
+                self.sharedGuestMailboxes = inc.filter { !$0.isExpired() }
+            }
+            self.selectedTab = 0
+            self.activeFolderId = "Inbox"
+            await switchActiveMailbox(to: targetMbx)
+            showToast(res.message ?? "🔑 Boîte partagée \(targetMbx) ouverte en accès invité !")
+        } catch {
+            showToast(error.localizedDescription)
+        }
+    }
+
+    public func openDirectMailFromToken(_ token: String) async {
+        let owner = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
+        guard !owner.isEmpty, owner != "__all__" else {
+            pendingDirectMailToken = token
+            return
+        }
+        do {
+            let res = try await VipleMailAPIClient.shared.resolveDirectMailIMessageLink(
+                token: token,
+                email: owner,
+                cid: currentCid
+            )
+            guard res.ok, let msg = res.message else {
+                showToast(res.error ?? "Ce lien direct Viple Mail est introuvable ou expiré.")
+                return
+            }
+            if res.foundInMailbox == true,
+               let targetMbx = res.mailbox?.lowercased(),
+               !targetMbx.isEmpty,
+               !isUnifiedInboxActive,
+               currentEmail.lowercased() != targetMbx {
+                await switchActiveMailbox(to: targetMbx)
+            }
+            self.closeChatSession()
+            self.selectedTab = 0
+            self.activeThreadMessages = [msg]
+            self.openMessage(msg)
+            showToast("✉️ Courrier ouvert directement depuis iMessage")
         } catch {
             showToast(error.localizedDescription)
         }

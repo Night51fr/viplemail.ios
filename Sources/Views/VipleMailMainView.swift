@@ -80,6 +80,16 @@ public struct VipleMailMainView: View {
                 .environmentObject(vm)
                 .preferredColorScheme(vm.preferredColorSchemeOverride)
         }
+        .sheet(isPresented: $vm.isShowingGuestAccessSheet) {
+            GuestMailboxAccessManagerSheet()
+                .environmentObject(vm)
+                .preferredColorScheme(vm.preferredColorSchemeOverride)
+        }
+        .sheet(item: $vm.activeIMessagePayload) { imsgPayload in
+            VipleIMessagePresenterSheet(payload: imsgPayload)
+                .environmentObject(vm)
+                .preferredColorScheme(vm.preferredColorSchemeOverride)
+        }
     }
 
     private func transitionFromEcosystemPortalToAppSplash() {
@@ -347,6 +357,24 @@ public struct VipleMailMainView: View {
                         }
                     }
 
+                    if !vm.sharedGuestMailboxes.isEmpty {
+                        Section("Boîtes partagées (Accès Invité)") {
+                            ForEach(vm.sharedGuestMailboxes) { grant in
+                                let isActiveGuest = vm.isGuestMailboxActive && grant.ownerMailbox.lowercased() == vm.currentEmail.lowercased()
+                                Button {
+                                    Task {
+                                        await vm.switchActiveMailbox(to: grant.ownerMailbox)
+                                    }
+                                } label: {
+                                    Label(
+                                        "\(grant.ownerMailbox) • ⏱ \(grant.formattedCountdown(compact: true))",
+                                        systemImage: isActiveGuest ? "checkmark.circle.fill" : "key.fill"
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     if !vm.externalAccounts.isEmpty {
                         Section("Boîtes e-mail externes (IMAP)") {
                             ForEach(vm.externalAccounts) { ext in
@@ -367,6 +395,12 @@ public struct VipleMailMainView: View {
                     }
 
                     Divider()
+
+                    Button {
+                        vm.isShowingGuestAccessSheet = true
+                    } label: {
+                        Label("Accès invité temporaire (1h–48h) & iMessage…", systemImage: "key.radiowaves.forward.fill")
+                    }
 
                     Button {
                         vm.isShowingConnectedDevicesSheet = true
@@ -414,8 +448,16 @@ public struct VipleMailMainView: View {
 
     private func headerAccountPill(user: VipleMailUser, showDropdownChevron: Bool) -> some View {
         HStack(spacing: 8) {
+            if vm.isGuestMailboxActive, let activeGrant = vm.activeGuestGrant {
+                GuestCountdownBadgeView(grant: activeGrant, compact: true, filledStyle: true) {
+                    vm.pruneAndExitExpiredGuestMailboxes()
+                }
+            }
+
             VStack(alignment: .trailing, spacing: 1) {
-                Text(vm.isExternalMailboxActive ? (vm.activeExternalProviderName ?? user.displayName) : user.displayName)
+                Text(vm.isGuestMailboxActive
+                     ? "Invité • \(vm.activeGuestGrant?.ownerDisplayName ?? vm.currentEmail)"
+                     : (vm.isExternalMailboxActive ? (vm.activeExternalProviderName ?? user.displayName) : user.displayName))
                     .font(.system(size: 12.5, weight: .bold, design: .rounded))
                     .foregroundStyle(VipleMailPalette.ink)
                     .lineLimit(1)

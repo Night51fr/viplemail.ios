@@ -22,6 +22,7 @@ public struct ComposeMailView: View {
     @State private var includeSignature: Bool = true
     @State private var disableMailRteForThisMail: Bool = false
     @State private var isShowingMailRteHelp: Bool = false
+    @State private var notifyViaIMessageAfterSend: Bool = false
     @State private var attachments: [VipleMailAttachment] = []
     @State private var draftId: String? = nil
     @State private var threadId: String? = nil
@@ -680,8 +681,45 @@ public struct ComposeMailView: View {
                     mailRteOptionRow
                     Divider()
                 }
+
+                imessageDirectLinkOptionRow
+                Divider()
             }
         }
+    }
+
+    private var imessageDirectLinkOptionRow: some View {
+        HStack(spacing: 9) {
+            Image(systemName: notifyViaIMessageAfterSend ? "message.badge.filled.fill" : "message.fill")
+                .font(.system(size: 14.5, weight: .semibold))
+                .foregroundStyle(notifyViaIMessageAfterSend ? Color(red: 0.04, green: 0.52, blue: 1.0) : VipleMailPalette.primary)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Prévenir par iMessage avec lien direct")
+                    .font(.system(size: 13.5, weight: .medium))
+                    .foregroundStyle(VipleMailPalette.ink)
+                    .lineLimit(1)
+                if notifyViaIMessageAfterSend {
+                    Text("Ouvre iMessage après l'envoi avec un lien qui redirige droit vers ce courrier.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(VipleMailPalette.inkSecondary)
+                        .lineLimit(2)
+                }
+            }
+
+            Spacer(minLength: 6)
+
+            Toggle("", isOn: $notifyViaIMessageAfterSend.animation(.spring(response: 0.28, dampingFraction: 0.84)))
+                .labelsHidden()
+                .tint(Color(red: 0.04, green: 0.52, blue: 1.0))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 9)
+        .background(
+            notifyViaIMessageAfterSend
+                ? Color(red: 0.04, green: 0.52, blue: 1.0).opacity(0.08)
+                : Color.clear
+        )
     }
 
     private var mailRteOptionRow: some View {
@@ -1094,6 +1132,18 @@ public struct ComposeMailView: View {
                 }
 
                 Button {
+                    submitNow(forceIMessageAfterSend: true)
+                } label: {
+                    Image(systemName: "message.badge.filled.fill")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(canSend ? Color(red: 0.04, green: 0.52, blue: 1.0) : VipleMailPalette.inkMuted.opacity(0.45))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                }
+                .disabled(!canSend)
+                .accessibilityLabel("Envoyer le mail puis partager le lien direct par iMessage")
+
+                Button {
                     saveAsDraftAndDismiss()
                 } label: {
                     Image(systemName: "tray.and.arrow.down")
@@ -1403,7 +1453,7 @@ public struct ComposeMailView: View {
         }
     }
 
-    private func submitNow() {
+    private func submitNow(forceIMessageAfterSend: Bool = false) {
         if isEffectiveChatMode, let peer = detectedVipleMailRecipient {
             Task {
                 if let session = await vm.sendChatMessage(
@@ -1421,6 +1471,12 @@ public struct ComposeMailView: View {
             }
             return
         }
+
+        let shouldOpenIMessage = notifyViaIMessageAfterSend || forceIMessageAfterSend
+        let targetRecipientsRaw = toField
+        let currentSubj = subjectField.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "(Sans objet)"
+            : subjectField.trimmingCharacters(in: .whitespacesAndNewlines)
 
         Task {
             let finalBodyText: String
@@ -1449,7 +1505,21 @@ public struct ComposeMailView: View {
                 disableMailRte: disableMailRteForThisMail
             )
             if ok {
+                let directLink = vm.lastSentDirectMailLink
+                let rcptPhones = vm.preferredIMessageRecipients(for: targetRecipientsRaw)
                 dismiss()
+                if shouldOpenIMessage, let link = directLink, !link.shareUrl.isEmpty {
+                    try? await Task.sleep(nanoseconds: 340_000_000)
+                    let msgBody = link.imessagePreviewText.isEmpty
+                        ? "✉️ Je viens de t'envoyer un courrier sur Viple Mail (« \(currentSubj) »). Ouvre-le directement ici :\n\(link.shareUrl)"
+                        : link.imessagePreviewText
+                    vm.presentIMessageComposer(
+                        recipients: rcptPhones,
+                        body: msgBody,
+                        shareUrl: link.shareUrl,
+                        subjectLabel: currentSubj
+                    )
+                }
             }
         }
     }

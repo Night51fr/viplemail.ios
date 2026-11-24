@@ -646,6 +646,24 @@ public struct MessageDetailView: View {
                     .accessibilityLabel(effectiveRenderHtmlDark ? "Afficher ce courrier sur fond clair" : "Adapter ce courrier au mode sombre")
                 }
 
+                if !currentMessage.isLockedByCenelisPin {
+                    Button {
+                        Task {
+                            await vm.shareMessageViaIMessage(currentMessage)
+                        }
+                    } label: {
+                        if vm.isCreatingIMessageLink {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                        } else {
+                            Image(systemName: "message.badge.filled.fill")
+                                .foregroundStyle(Color(red: 0.04, green: 0.52, blue: 1.0))
+                        }
+                    }
+                    .disabled(vm.isCreatingIMessageLink)
+                    .accessibilityLabel("Envoyer le lien direct vers ce courrier par iMessage")
+                }
+
                 Button {
                     Task {
                         await vm.performMessageAction(
@@ -661,6 +679,18 @@ public struct MessageDetailView: View {
                 .accessibilityLabel("Marquer comme non lu")
 
                 Menu {
+                    if !currentMessage.isLockedByCenelisPin {
+                        Button {
+                            Task {
+                                await vm.shareMessageViaIMessage(currentMessage)
+                            }
+                        } label: {
+                            Label("Envoyer le lien direct par iMessage", systemImage: "message.badge.filled.fill")
+                        }
+
+                        Divider()
+                    }
+
                     Button {
                         vm.presentComposer(.reply(currentMessage))
                     } label: {

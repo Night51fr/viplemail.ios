@@ -99,6 +99,18 @@ public struct VipleMailApp: App {
                 .environmentObject(notifManager)
                 .tint(VipleMailPalette.primary)
                 .preferredColorScheme(mailVM.preferredColorSchemeOverride)
+                .onOpenURL { incomingURL in
+                    Task { @MainActor in
+                        await mailVM.handleIncomingURL(incomingURL)
+                    }
+                }
+                .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { userActivity in
+                    if let webURL = userActivity.webpageURL {
+                        Task { @MainActor in
+                            await mailVM.handleIncomingURL(webURL)
+                        }
+                    }
+                }
                 .onAppear {
                     mailVM.applyWindowInterfaceStyle()
                     notifManager.attachedViewModel = mailVM

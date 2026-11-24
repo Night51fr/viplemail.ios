@@ -39,6 +39,7 @@ public struct MailSettingsView: View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 18) {
                 accountProfileCard
+                guestAccessAndIMessageCard
                 connectedDevicesEntryCard
                 if vm.isApprovedCenelisAgent {
                     cenelisAgentMailboxCard
@@ -134,6 +135,78 @@ public struct MailSettingsView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Carte « Accès Invité Temporaire (1h, 8h, 24h, 48h) & iMessage »
+
+    private var guestAccessAndIMessageCard: some View {
+        let activeOutCount = vm.outgoingGuestGrants.count
+        let activeInCount = vm.sharedGuestMailboxes.count
+
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Label("Accès Invité & iMessage", systemImage: "key.radiowaves.forward.fill")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(VipleMailPalette.ink)
+
+                Spacer()
+
+                if activeOutCount > 0 || activeInCount > 0 {
+                    Text("\(activeOutCount + activeInCount) ACTIF\((activeOutCount + activeInCount) > 1 ? "S" : "")")
+                        .font(.system(size: 10, weight: .black, design: .rounded))
+                        .foregroundStyle(VipleMailPalette.primary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3.5)
+                        .background(Capsule().fill(VipleMailPalette.primary.opacity(0.14)))
+                } else {
+                    Text("1H • 8H • 24H • 48H")
+                        .font(.system(size: 10, weight: .black, design: .rounded))
+                        .foregroundStyle(VipleMailPalette.inkMuted)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3.5)
+                        .background(Capsule().fill(VipleMailPalette.surfaceSubtle))
+                }
+            }
+
+            Text("Partagez temporairement votre boîte mail pendant 1h, 8h, 24h ou 48h par lien iMessage ou adresse Viple Mail. La boîte partagée s'affiche chez votre invité avec un compte à rebours en direct.")
+                .font(.system(size: 12.5))
+                .foregroundStyle(VipleMailPalette.inkSecondary)
+
+            if !vm.sharedGuestMailboxes.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(vm.sharedGuestMailboxes) { grant in
+                        SharedGuestMailboxRowView(
+                            grant: grant,
+                            isActive: vm.isGuestMailboxActive && vm.currentEmail.lowercased() == grant.ownerMailbox.lowercased()
+                        ) {
+                            Task {
+                                vm.selectedTab = 0
+                                await vm.switchActiveMailbox(to: grant.ownerMailbox)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Button {
+                vm.isShowingGuestAccessSheet = true
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "message.badge.filled.fill")
+                    Text("Partager ma boîte (1h, 8h, 24h, 48h) par iMessage")
+                        .font(.system(size: 13.5, weight: .bold, design: .rounded))
+                        .lineLimit(1)
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .fill(VipleMailPalette.heroGradient)
+                )
+            }
+        }
+        .vipleMailCard(cornerRadius: 20, padding: 16)
     }
 
     // MARK: - Carte Proéminente « Appareils connectés & Badges d'applications Viple Live ID »

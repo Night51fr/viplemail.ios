@@ -23,6 +23,10 @@ public struct VipleMailBootstrapResponse: Codable, Sendable {
     public let isUnifiedInbox: Bool?
     public let isApprovedCenelisAgent: Bool?
     public let sessionRevoked: Bool?
+    public let sharedGuestMailboxes: [GuestMailboxGrant]?
+    public let outgoingGuestGrants: [GuestMailboxGrant]?
+    public let isGuestMailbox: Bool?
+    public let activeGuestGrant: GuestMailboxGrant?
 }
 
 public struct VipleMailAuthResponse: Codable, Sendable {
@@ -57,6 +61,10 @@ public struct VipleMailSwitchMailboxResponse: Codable, Sendable {
     public let cenelisMailAddress: String?
     public let availableMailboxes: [String]?
     public let externalAccounts: [ExternalMailAccount]?
+    public let sharedGuestMailboxes: [GuestMailboxGrant]?
+    public let outgoingGuestGrants: [GuestMailboxGrant]?
+    public let isGuestMailbox: Bool?
+    public let activeGuestGrant: GuestMailboxGrant?
     public let token: String?
     public let user: VipleMailUser?
 }
@@ -72,6 +80,10 @@ public struct VipleMailClaimCenelisResponse: Codable, Sendable {
     public let cenelisMailAddress: String?
     public let availableMailboxes: [String]?
     public let externalAccounts: [ExternalMailAccount]?
+    public let sharedGuestMailboxes: [GuestMailboxGrant]?
+    public let outgoingGuestGrants: [GuestMailboxGrant]?
+    public let isGuestMailbox: Bool?
+    public let activeGuestGrant: GuestMailboxGrant?
     public let token: String?
     public let user: VipleMailUser?
 }
@@ -713,6 +725,7 @@ public struct VipleMailPinInfoResponse: Codable, Sendable {
     public let ok: Bool
     public let isAgent: Bool?
     public let hasPin: Bool?
+    public let needsSetup: Bool?
     public let pinLength: Int?
     public let lockedUntilUtc: String?
     public let agentEmail: String?
@@ -1251,4 +1264,260 @@ public struct VipleSecurityActionResponse: Codable, Sendable {
     public let blockedSenders: [String]?
     public let message: String?
     public let error: String?
+}
+
+// MARK: - Accès Invité Temporaire aux Boîtes Mail (1h, 8h, 24h, 48h) & Intégration iMessage
+
+public enum GuestMailboxDuration: Int, CaseIterable, Identifiable, Sendable {
+    case oneHour = 1
+    case eightHours = 8
+    case twentyFourHours = 24
+    case fortyEightHours = 48
+
+    public var id: Int { rawValue }
+
+    public var shortLabel: String {
+        "\(rawValue)h"
+    }
+
+    public var title: String {
+        switch self {
+        case .oneHour: return "1 heure"
+        case .eightHours: return "8 heures"
+        case .twentyFourHours: return "24 heures"
+        case .fortyEightHours: return "48 heures"
+        }
+    }
+
+    public var subtitle: String {
+        switch self {
+        case .oneHour: return "Consultation express"
+        case .eightHours: return "Journée de travail"
+        case .twentyFourHours: return "1 jour complet"
+        case .fortyEightHours: return "2 jours / week-end"
+        }
+    }
+
+    public var iconName: String {
+        switch self {
+        case .oneHour: return "bolt.badge.clock.fill"
+        case .eightHours: return "clock.badge.checkmark.fill"
+        case .twentyFourHours: return "sun.max.circle.fill"
+        case .fortyEightHours: return "calendar.badge.clock"
+        }
+    }
+}
+
+public struct GuestMailboxGrant: Codable, Identifiable, Equatable, Hashable, Sendable {
+    public let grantId: String
+    public let inviteToken: String
+    public let ownerMailbox: String
+    public let ownerDisplayName: String
+    public let ownerAvatarUrl: String?
+    public let guestEmail: String?
+    public let guestDisplayName: String?
+    public let durationHours: Int
+    public let allowSend: Bool
+    public let labelNote: String
+    public let status: String
+    public let createdAtUtc: String
+    public let expiresAtUtc: String
+    public let remainingSeconds: Int64
+    public let inviteUrl: String
+    public let deepLinkUrl: String
+
+    public var id: String { grantId }
+
+    enum CodingKeys: String, CodingKey {
+        case grantId, inviteToken, ownerMailbox, ownerDisplayName, ownerAvatarUrl
+        case guestEmail, guestDisplayName, durationHours, allowSend, labelNote
+        case status, createdAtUtc, expiresAtUtc, remainingSeconds, inviteUrl, deepLinkUrl
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.grantId = (try? c.decode(String.self, forKey: .grantId)) ?? UUID().uuidString
+        self.inviteToken = (try? c.decode(String.self, forKey: .inviteToken)) ?? ""
+        self.ownerMailbox = (try? c.decode(String.self, forKey: .ownerMailbox)) ?? ""
+        self.ownerDisplayName = (try? c.decode(String.self, forKey: .ownerDisplayName)) ?? self.ownerMailbox
+        self.ownerAvatarUrl = try? c.decode(String.self, forKey: .ownerAvatarUrl)
+        self.guestEmail = try? c.decode(String.self, forKey: .guestEmail)
+        self.guestDisplayName = try? c.decode(String.self, forKey: .guestDisplayName)
+        self.durationHours = (try? c.decode(Int.self, forKey: .durationHours)) ?? 8
+        self.allowSend = (try? c.decode(Bool.self, forKey: .allowSend)) ?? false
+        self.labelNote = (try? c.decode(String.self, forKey: .labelNote)) ?? ""
+        self.status = (try? c.decode(String.self, forKey: .status)) ?? "active"
+        self.createdAtUtc = (try? c.decode(String.self, forKey: .createdAtUtc)) ?? ""
+        self.expiresAtUtc = (try? c.decode(String.self, forKey: .expiresAtUtc)) ?? ""
+        self.remainingSeconds = (try? c.decode(Int64.self, forKey: .remainingSeconds)) ?? 0
+        self.inviteUrl = (try? c.decode(String.self, forKey: .inviteUrl)) ?? ""
+        self.deepLinkUrl = (try? c.decode(String.self, forKey: .deepLinkUrl)) ?? ""
+    }
+
+    public var expirationDate: Date? {
+        let isoFrac = ISO8601DateFormatter()
+        isoFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = isoFrac.date(from: expiresAtUtc) {
+            return d
+        }
+        let iso = ISO8601DateFormatter()
+        return iso.date(from: expiresAtUtc)
+    }
+
+    public func remainingTimeInterval(at now: Date = Date()) -> TimeInterval {
+        guard let exp = expirationDate else {
+            return max(0, TimeInterval(remainingSeconds))
+        }
+        return max(0, exp.timeIntervalSince(now))
+    }
+
+    public func isExpired(at now: Date = Date()) -> Bool {
+        status.lowercased() == "revoked" || status.lowercased() == "expired" || remainingTimeInterval(at: now) <= 0
+    }
+
+    public func formattedCountdown(at now: Date = Date(), compact: Bool = false) -> String {
+        let rem = Int(floor(remainingTimeInterval(at: now)))
+        guard rem > 0 else { return "Expiré" }
+        let hours = rem / 3600
+        let mins = (rem % 3600) / 60
+        let secs = rem % 60
+        if compact {
+            if hours > 0 {
+                return "\(hours)h \(String(format: "%02d", mins))m"
+            }
+            if mins > 0 {
+                return "\(mins)m \(String(format: "%02d", secs))s"
+            }
+            return "\(secs)s"
+        }
+        if hours > 0 {
+            return "\(hours)h \(String(format: "%02d", mins))m \(String(format: "%02d", secs))s"
+        }
+        return "\(String(format: "%02d", mins))m \(String(format: "%02d", secs))s"
+    }
+}
+
+public struct DirectMailShareLink: Codable, Equatable, Hashable, Sendable {
+    public let token: String
+    public let senderMailbox: String
+    public let senderDisplayName: String
+    public let recipientEmails: String
+    public let subject: String
+    public let snippet: String
+    public let rfcMessageId: String
+    public let sourceMessageId: String?
+    public let createdAtUtc: String
+    public let expiresAtUtc: String
+    public let shareUrl: String
+    public let deepLinkUrl: String
+    public let imessagePreviewText: String
+
+    enum CodingKeys: String, CodingKey {
+        case token, senderMailbox, senderDisplayName, recipientEmails, subject, snippet
+        case rfcMessageId, sourceMessageId, createdAtUtc, expiresAtUtc
+        case shareUrl, deepLinkUrl, imessagePreviewText
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.token = (try? c.decode(String.self, forKey: .token)) ?? ""
+        self.senderMailbox = (try? c.decode(String.self, forKey: .senderMailbox)) ?? ""
+        self.senderDisplayName = (try? c.decode(String.self, forKey: .senderDisplayName)) ?? ""
+        self.recipientEmails = (try? c.decode(String.self, forKey: .recipientEmails)) ?? ""
+        self.subject = (try? c.decode(String.self, forKey: .subject)) ?? "(Sans objet)"
+        self.snippet = (try? c.decode(String.self, forKey: .snippet)) ?? ""
+        self.rfcMessageId = (try? c.decode(String.self, forKey: .rfcMessageId)) ?? ""
+        self.sourceMessageId = try? c.decode(String.self, forKey: .sourceMessageId)
+        self.createdAtUtc = (try? c.decode(String.self, forKey: .createdAtUtc)) ?? ""
+        self.expiresAtUtc = (try? c.decode(String.self, forKey: .expiresAtUtc)) ?? ""
+        self.shareUrl = (try? c.decode(String.self, forKey: .shareUrl)) ?? ""
+        self.deepLinkUrl = (try? c.decode(String.self, forKey: .deepLinkUrl)) ?? ""
+        self.imessagePreviewText = (try? c.decode(String.self, forKey: .imessagePreviewText)) ?? ""
+    }
+}
+
+public struct GuestMailboxListResponse: Codable, Sendable {
+    public let ok: Bool
+    public let sharedGuestMailboxes: [GuestMailboxGrant]?
+    public let outgoingGuestGrants: [GuestMailboxGrant]?
+    public let error: String?
+}
+
+public struct GuestMailboxCreateResponse: Codable, Sendable {
+    public let ok: Bool
+    public let message: String?
+    public let error: String?
+    public let grant: GuestMailboxGrant?
+    public let inviteUrl: String?
+    public let deepLinkUrl: String?
+    public let imessageText: String?
+    public let outgoingGuestGrants: [GuestMailboxGrant]?
+}
+
+public struct GuestMailboxClaimResponse: Codable, Sendable {
+    public let ok: Bool
+    public let message: String?
+    public let error: String?
+    public let mailbox: String?
+    public let grant: GuestMailboxGrant?
+    public let sharedGuestMailboxes: [GuestMailboxGrant]?
+}
+
+public struct GuestMailboxRevokeResponse: Codable, Sendable {
+    public let ok: Bool
+    public let message: String?
+    public let error: String?
+    public let revokedMailbox: String?
+    public let sharedGuestMailboxes: [GuestMailboxGrant]?
+    public let outgoingGuestGrants: [GuestMailboxGrant]?
+}
+
+public struct DirectMailLinkCreateResponse: Codable, Sendable {
+    public let ok: Bool
+    public let error: String?
+    public let directMailLink: DirectMailShareLink?
+    public let shareUrl: String?
+    public let deepLinkUrl: String?
+    public let imessageText: String?
+}
+
+public struct DirectMailLinkResolveResponse: Codable, Sendable {
+    public let ok: Bool
+    public let error: String?
+    public let foundInMailbox: Bool?
+    public let mailbox: String?
+    public let link: DirectMailShareLink?
+    public let message: VipleMailMessage?
+}
+
+public struct VipleMailSendResponse: Codable, Sendable {
+    public let ok: Bool
+    public let deliveryMode: String?
+    public let message: String?
+    public let error: String?
+    public let rfcMessageId: String?
+    public let sentMessageId: String?
+    public let directMailLink: DirectMailShareLink?
+}
+
+public struct IMessageComposePayload: Identifiable, Equatable, Sendable {
+    public let id: UUID
+    public let recipients: [String]
+    public let body: String
+    public let shareUrl: String?
+    public let subjectLabel: String?
+
+    public init(
+        id: UUID = UUID(),
+        recipients: [String] = [],
+        body: String,
+        shareUrl: String? = nil,
+        subjectLabel: String? = nil
+    ) {
+        self.id = id
+        self.recipients = recipients
+        self.body = body
+        self.shareUrl = shareUrl
+        self.subjectLabel = subjectLabel
+    }
 }
