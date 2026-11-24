@@ -75,6 +75,11 @@ public struct VipleMailMainView: View {
                 .environmentObject(vm)
                 .preferredColorScheme(vm.preferredColorSchemeOverride)
         }
+        .sheet(isPresented: $vm.isShowingConnectedDevicesSheet) {
+            ConnectedDevicesManagerView()
+                .environmentObject(vm)
+                .preferredColorScheme(vm.preferredColorSchemeOverride)
+        }
     }
 
     private func transitionFromEcosystemPortalToAppSplash() {
@@ -362,6 +367,12 @@ public struct VipleMailMainView: View {
                     }
 
                     Divider()
+
+                    Button {
+                        vm.isShowingConnectedDevicesSheet = true
+                    } label: {
+                        Label("Appareils connectés Viple Live ID", systemImage: "iphone.gen3.radiowaves.left.and.right")
+                    }
 
                     Button {
                         vm.presentAddExternalAccountSheet()

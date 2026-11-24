@@ -730,6 +730,34 @@ public struct MessageDetailView: View {
                         Label("Déplacer dans Indésirables", systemImage: "exclamationmark.shield")
                     }
 
+                    Button {
+                        Task {
+                            await vm.reportMessageAbuse(
+                                senderEmail: currentMessage.senderEmail,
+                                messageId: currentMessage.id,
+                                category: "phishing_or_abuse",
+                                alsoBlock: false
+                            )
+                        }
+                    } label: {
+                        Label("Signaler un hameçonnage / abus", systemImage: "flag.badge.ellipsis")
+                    }
+
+                    if !currentMessage.senderEmail.isEmpty {
+                        Button(role: .destructive) {
+                            Task {
+                                await vm.reportMessageAbuse(
+                                    senderEmail: currentMessage.senderEmail,
+                                    messageId: currentMessage.id,
+                                    category: "blocked_sender",
+                                    alsoBlock: true
+                                )
+                            }
+                        } label: {
+                            Label("Bloquer cet expéditeur", systemImage: "hand.raised.fill")
+                        }
+                    }
+
                     Divider()
 
                     Button(role: .destructive) {

@@ -18,6 +18,9 @@ public struct MailSettingsView: View {
     @State private var isEditingCenelisHandle: Bool = false
     @State private var accountPendingDeletion: ExternalMailAccount? = nil
     @State private var isShowingConnectedDevicesSheet: Bool = false
+    @State private var isShowingDeleteAccountSheet: Bool = false
+    @State private var deleteAccountConfirmationInput: String = ""
+    @State private var deleteAccountError: String? = nil
 
     // Configuration Serveur Push Apple APNs (.p8) pour administrateurs / agents Cenelis
     @State private var isApnsConfigExpanded: Bool = false
@@ -47,6 +50,7 @@ public struct MailSettingsView: View {
                 inboxAndSwipeCustomizationCard
                 signatureCard
                 vacationResponderCard
+                privacyLegalAndAccountDeletionCard
                 diagnosticsAndSignOutCard
             }
             .padding(16)
@@ -107,14 +111,21 @@ public struct MailSettingsView: View {
                 .environmentObject(vm)
                 .preferredColorScheme(vm.preferredColorSchemeOverride)
         }
+        .sheet(isPresented: $isShowingDeleteAccountSheet) {
+            deleteAccountConfirmationSheet
+                .preferredColorScheme(vm.preferredColorSchemeOverride)
+        }
         .onAppear {
             displayNameField = vm.currentUser?.displayName ?? ""
             personalMessageField = vm.currentUser?.personalMessage ?? ""
             cenelisCustomHandleField = vm.suggestedCenelisLocalPart
             Task {
                 await notifManager.refreshAuthorizationStatus()
-                await notifManager.refreshServerApnsStatus()
+                if vm.isApprovedCenelisAgent {
+                    await notifManager.refreshServerApnsStatus()
+                }
                 await vm.refreshConnectedDevices(silent: true)
+                await vm.refreshBlockedSenders()
                 if let details = notifManager.apnsStatusDetails?.apns {
                     if !details.teamId.isEmpty { apnsTeamIdField = details.teamId }
                     if !details.keyId.isEmpty { apnsKeyIdField = details.keyId }
@@ -125,32 +136,45 @@ public struct MailSettingsView: View {
         }
     }
 
-    // MARK: - Carte Proéminente « Appareils connectés & Sessions actives »
+    // MARK: - Carte Proéminente « Appareils connectés & Badges d'applications Viple Live ID »
 
     private var connectedDevicesEntryCard: some View {
         let localModel = CenelisDeviceIdentity.friendlyModelName()
         let localOs = CenelisDeviceIdentity.osVersionString()
         let localSymbol = CenelisDeviceIdentity.currentDeviceSymbolName()
-        let activeCount = max(1, vm.connectedDevices.count)
+        let connectedCount = max(1, vm.connectedDevices.filter { $0.effectiveIsConnected }.count)
+        let disconnectedCount = vm.connectedDevices.filter { !$0.effectiveIsConnected }.count
+        let currentDevApps = vm.connectedDevices.first(where: { $0.isCurrentDevice })?.connectedApps ?? []
 
         return VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
-                Label("Appareils connectés & Sessions actives", systemImage: "lock.iphone")
+                Label("Appareils Viple Live ID", systemImage: "iphone.gen3.radiowaves.left.and.right")
                     .font(.system(size: 15, weight: .bold, design: .rounded))
                     .foregroundStyle(VipleMailPalette.ink)
                     .lineLimit(1)
 
                 Spacer(minLength: 4)
 
-                Text("\(activeCount) ACTIF\(activeCount > 1 ? "S" : "")")
-                    .font(.system(size: 10, weight: .black, design: .rounded))
-                    .foregroundStyle(VipleMailPalette.success)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 3.5)
-                    .background(Capsule().fill(VipleMailPalette.success.opacity(0.14)))
+                HStack(spacing: 5) {
+                    Text("\(connectedCount) CONNECTÉ\(connectedCount > 1 ? "S" : "")")
+                        .font(.system(size: 10, weight: .black, design: .rounded))
+                        .foregroundStyle(VipleMailPalette.success)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3.5)
+                        .background(Capsule().fill(VipleMailPalette.success.opacity(0.14)))
+
+                    if disconnectedCount > 0 {
+                        Text("\(disconnectedCount) DÉCO.")
+                            .font(.system(size: 10, weight: .black, design: .rounded))
+                            .foregroundStyle(VipleMailPalette.inkMuted)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3.5)
+                            .background(Capsule().fill(VipleMailPalette.surfaceSubtle))
+                    }
+                }
             }
 
-            Text("Visualisez les iPhone, iPad et ordinateurs reliés à votre identifiant à travers Viple Mail, Livria Store, Livria Social et Cenelis Academy, et coupez instantanément l'accès ou les notifications à distance.")
+            Text("Vérifiez dans quelles applications chaque appareil est actuellement connecté grâce aux badges d'icônes, et déconnectez une application ou tout un appareil à distance.")
                 .font(.system(size: 12.5))
                 .foregroundStyle(VipleMailPalette.inkSecondary)
 
@@ -178,7 +202,7 @@ public struct MailSettingsView: View {
                                 Circle()
                                     .fill(VipleMailPalette.success)
                                     .frame(width: 5.5, height: 5.5)
-                                Text("Cet appareil")
+                                Text("Connecté")
                                     .font(.system(size: 10, weight: .black, design: .rounded))
                                     .foregroundStyle(VipleMailPalette.success)
                             }
@@ -187,13 +211,40 @@ public struct MailSettingsView: View {
                             .background(Capsule().fill(VipleMailPalette.success.opacity(0.14)))
                         }
 
-                        Text("\(localOs) • Push exclusif rattaché à \(vm.primaryHostedEmail.isEmpty ? vm.currentEmail : vm.primaryHostedEmail)")
+                        Text("\(localOs) • \(max(1, currentDevApps.count)) application\(currentDevApps.count > 1 ? "s" : "") active\(currentDevApps.count > 1 ? "s" : "")")
                             .font(.system(size: 11.5, weight: .medium))
                             .foregroundStyle(VipleMailPalette.inkMuted)
                             .lineLimit(1)
                     }
 
                     Spacer(minLength: 4)
+
+                    HStack(spacing: -4) {
+                        if currentDevApps.isEmpty {
+                            #if canImport(UIKit)
+                            if let uiImg = UIImage(named: "EcoIconVipleMail") {
+                                Image(uiImage: uiImg)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 24, height: 24)
+                                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            }
+                            #endif
+                        } else {
+                            ForEach(currentDevApps.prefix(4)) { app in
+                                #if canImport(UIKit)
+                                if let asset = app.resolvedAssetIconName, let uiImg = UIImage(named: asset) {
+                                    Image(uiImage: uiImg)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 24, height: 24)
+                                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(VipleMailPalette.surface, lineWidth: 1.4))
+                                }
+                                #endif
+                            }
+                        }
+                    }
 
                     Image(systemName: "chevron.right")
                         .font(.system(size: 13, weight: .bold))
@@ -216,7 +267,7 @@ public struct MailSettingsView: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "iphone.gen3.radiowaves.left.and.right")
-                    Text("Ouvrir le gestionnaire d'appareils (\(activeCount))")
+                    Text("Gérer mes appareils & badges d'apps (\(max(1, vm.connectedDevices.count)))")
                         .font(.system(size: 14, weight: .bold, design: .rounded))
                 }
                 .foregroundStyle(.white)
@@ -979,53 +1030,55 @@ public struct MailSettingsView: View {
                         .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.primary.opacity(0.11)))
                     }
 
-                    Button {
-                        let ownerEmail = vm.primaryHostedEmail.isEmpty ? vm.currentEmail : vm.primaryHostedEmail
-                        guard !ownerEmail.isEmpty else { return }
-                        isTestingRemoteApns = true
-                        Task {
-                            defer { isTestingRemoteApns = false }
-                            do {
-                                let res = try await VipleMailAPIClient.shared.triggerServerApnsTest(
-                                    email: ownerEmail,
-                                    cid: vm.currentCid,
-                                    delaySeconds: 5
-                                )
-                                if res.ok {
-                                    vm.showToast(res.message ?? "Verrouillez votre iPhone : push Apple APNs dans 5 s !")
-                                } else {
-                                    if res.apnsConfigured == false {
-                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                                            isApnsConfigExpanded = true
+                    if vm.isApprovedCenelisAgent {
+                        Button {
+                            let ownerEmail = vm.primaryHostedEmail.isEmpty ? vm.currentEmail : vm.primaryHostedEmail
+                            guard !ownerEmail.isEmpty else { return }
+                            isTestingRemoteApns = true
+                            Task {
+                                defer { isTestingRemoteApns = false }
+                                do {
+                                    let res = try await VipleMailAPIClient.shared.triggerServerApnsTest(
+                                        email: ownerEmail,
+                                        cid: vm.currentCid,
+                                        delaySeconds: 5
+                                    )
+                                    if res.ok {
+                                        vm.showToast(res.message ?? "Verrouillez votre iPhone : push Apple APNs dans 5 s !")
+                                    } else {
+                                        if res.apnsConfigured == false {
+                                            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                                                isApnsConfigExpanded = true
+                                            }
                                         }
+                                        vm.showToast(res.message ?? "Push APNs indisponible.")
                                     }
-                                    vm.showToast(res.message ?? "Push APNs indisponible.")
+                                } catch {
+                                    vm.showToast(error.localizedDescription)
                                 }
-                            } catch {
-                                vm.showToast(error.localizedDescription)
                             }
-                        }
-                    } label: {
-                        HStack(spacing: 6) {
-                            if isTestingRemoteApns {
-                                ProgressView()
-                                    .controlSize(.small)
-                            } else {
-                                Image(systemName: "lock.iphone")
+                        } label: {
+                            HStack(spacing: 6) {
+                                if isTestingRemoteApns {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                } else {
+                                    Image(systemName: "lock.iphone")
+                                }
+                                Text("Test écran verrouillé (5 s)")
+                                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                                    .lineLimit(1)
                             }
-                            Text("Test écran verrouillé (5 s)")
-                                .font(.system(size: 13, weight: .bold, design: .rounded))
-                                .lineLimit(1)
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.primary))
                         }
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.primary))
+                        .disabled(isTestingRemoteApns)
                     }
-                    .disabled(isTestingRemoteApns)
                 }
 
-                if vm.isApprovedCenelisAgent || notifManager.apnsStatusDetails?.canConfigure == true {
+                if vm.isApprovedCenelisAgent {
                     apnsServerAdminSection
                 }
             }
@@ -1440,6 +1493,209 @@ public struct MailSettingsView: View {
             }
         }
         .vipleMailCard(cornerRadius: 20, padding: 16)
+    }
+
+    // MARK: - Confidentialité, Expéditeurs Bloqués, Mentions Légales & Suppression du Compte (Conformité App Store)
+
+    private var privacyLegalAndAccountDeletionCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("Confidentialité, Sécurité & Compte", systemImage: "hand.raised.shield.fill")
+                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .foregroundStyle(VipleMailPalette.ink)
+
+            if !vm.blockedSenders.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Expéditeurs bloqués (\(vm.blockedSenders.count))")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundStyle(VipleMailPalette.inkSecondary)
+
+                    ForEach(vm.blockedSenders, id: \.self) { blocked in
+                        HStack {
+                            Image(systemName: "hand.raised.fill")
+                                .font(.system(size: 11.5, weight: .bold))
+                                .foregroundStyle(VipleMailPalette.danger)
+                            Text(blocked)
+                                .font(.system(size: 12.5, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(VipleMailPalette.ink)
+                                .lineLimit(1)
+                            Spacer()
+                            Button("Débloquer") {
+                                Task {
+                                    await vm.unblockSenderAddress(blocked)
+                                }
+                            }
+                            .font(.system(size: 11.5, weight: .bold, design: .rounded))
+                            .foregroundStyle(VipleMailPalette.primary)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(VipleMailPalette.surfaceSubtle))
+                    }
+                }
+                Divider()
+            }
+
+            VStack(spacing: 8) {
+                if let privUrl = URL(string: "https://mail.viplemail.fr/privacy") {
+                    legalNavigationRow(title: "Politique de confidentialité (RGPD)", icon: "lock.doc.fill", url: privUrl)
+                }
+                if let termsUrl = URL(string: "https://mail.viplemail.fr/terms") {
+                    legalNavigationRow(title: "Conditions d'utilisation (CLUF / EULA)", icon: "doc.text.fill", url: termsUrl)
+                }
+                if let supUrl = URL(string: "https://mail.viplemail.fr/support") {
+                    legalNavigationRow(title: "Assistance officielle & Signalement", icon: "lifepreserver.fill", url: supUrl)
+                }
+            }
+
+            Divider()
+
+            Button(role: .destructive) {
+                deleteAccountConfirmationInput = ""
+                deleteAccountError = nil
+                isShowingDeleteAccountSheet = true
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "person.crop.circle.badge.xmark")
+                    Text("Supprimer mon compte Viple Live ID…")
+                        .font(.system(size: 13.5, weight: .bold, design: .rounded))
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .bold))
+                }
+                .foregroundStyle(VipleMailPalette.danger)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 11)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(VipleMailPalette.danger.opacity(0.09))
+                )
+            }
+            .buttonStyle(.plain)
+        }
+        .vipleMailCard(cornerRadius: 20, padding: 16)
+    }
+
+    private func legalNavigationRow(title: String, icon: String, url: URL) -> some View {
+        Link(destination: url) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(VipleMailPalette.primary)
+                    .frame(width: 22)
+                Text(title)
+                    .font(.system(size: 13.5, weight: .semibold, design: .rounded))
+                    .foregroundStyle(VipleMailPalette.ink)
+                Spacer()
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 11.5, weight: .bold))
+                    .foregroundStyle(VipleMailPalette.inkMuted)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(RoundedRectangle(cornerRadius: 11).fill(VipleMailPalette.surfaceSubtle))
+        }
+    }
+
+    private var deleteAccountConfirmationSheet: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    HStack(spacing: 12) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(VipleMailPalette.danger.opacity(0.14))
+                                .frame(width: 48, height: 48)
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 22, weight: .bold))
+                                .foregroundStyle(VipleMailPalette.danger)
+                        }
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Suppression définitive du compte")
+                                .font(.system(size: 17, weight: .black, design: .rounded))
+                                .foregroundStyle(VipleMailPalette.ink)
+                            Text(vm.primaryHostedEmail.isEmpty ? vm.currentEmail : vm.primaryHostedEmail)
+                                .font(.system(size: 12.5, weight: .bold, design: .monospaced))
+                                .foregroundStyle(VipleMailPalette.danger)
+                        }
+                    }
+
+                    Text("Cette opération est irréversible. En confirmant, votre compte Viple Live ID, votre boîte @viplemail.fr, vos courriers, pièces jointes, discussions et l'ensemble de vos sessions d'appareils connectés seront définitivement effacés de nos serveurs.")
+                        .font(.system(size: 13.5))
+                        .foregroundStyle(VipleMailPalette.inkSecondary)
+
+                    if let deleteAccountError {
+                        Text(deleteAccountError)
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(VipleMailPalette.danger)
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.danger.opacity(0.10)))
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Saisissez SUPPRIMER en majuscules pour confirmer :")
+                            .font(.system(size: 12.5, weight: .bold))
+                            .foregroundStyle(VipleMailPalette.ink)
+
+                        TextField(
+                            "SUPPRIMER",
+                            text: $deleteAccountConfirmationInput,
+                            prompt: VipleMailPalette.prompt("SUPPRIMER", scheme: colorScheme)
+                        )
+                        .textInputAutocapitalization(.characters)
+                        .autocorrectionDisabled()
+                        .vipleMailTextInput()
+                        .font(.system(size: 15, weight: .heavy, design: .monospaced))
+                        .padding(13)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
+                    }
+
+                    Button(role: .destructive) {
+                        Task {
+                            let res = await vm.deleteMyVipleAccount(confirmation: deleteAccountConfirmationInput)
+                            if res.ok {
+                                isShowingDeleteAccountSheet = false
+                            } else {
+                                deleteAccountError = res.error
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            if vm.isDeletingAccount {
+                                ProgressView().tint(.white)
+                            } else {
+                                Image(systemName: "trash.fill")
+                            }
+                            Text("Supprimer définitivement mon Viple Live ID")
+                                .font(.system(size: 15, weight: .heavy, design: .rounded))
+                        }
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(deleteAccountConfirmationInput.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == "SUPPRIMER"
+                                      ? VipleMailPalette.danger
+                                      : VipleMailPalette.inkMuted.opacity(0.45))
+                        )
+                    }
+                    .disabled(vm.isDeletingAccount || deleteAccountConfirmationInput.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() != "SUPPRIMER")
+                }
+                .padding(20)
+            }
+            .background(VipleMailPalette.background)
+            .navigationTitle("Supprimer mon compte")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Annuler") {
+                        isShowingDeleteAccountSheet = false
+                    }
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                }
+            }
+        }
     }
 
     // MARK: - Diagnostics Serveur & Déconnexion

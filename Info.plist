@@ -17,20 +17,28 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>2026.11.19</string>
+	<string>2026.11.20</string>
 	<key>CFBundleVersion</key>
-	<string>19</string>
+	<string>20</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
+		<false/>
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
 		<true/>
 	</dict>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Viple Mail utilise votre photothèque pour joindre des photos et documents à vos e-mails.</string>
+	<string>Viple Mail utilise votre photothèque pour joindre les photos et documents que vous choisissez d'envoyer par e-mail ou dans vos discussions.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Viple Mail enregistre dans votre photothèque les images reçues en pièce jointe lorsque vous le demandez.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Viple Mail utilise l'appareil photo pour numériser un document et l'envoyer en pièce jointe.</string>
+	<string>Viple Mail utilise l'appareil photo pour photographier un document et l'ajouter en pièce jointe à votre courrier.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

@@ -12,15 +12,9 @@ public final class VipleMailTLSSessionDelegate: NSObject, URLSessionDelegate, Se
         didReceive challenge: URLAuthenticationChallenge,
         completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
     ) {
-        let host = challenge.protectionSpace.host.lowercased()
         if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
-           (host.hasSuffix("viplemail.fr")
-            || host.hasSuffix("cenelis.com")
-            || host.hasSuffix("cenelis.fr")
-            || host.hasSuffix("viple.digital")
-            || host.hasSuffix("livria.store")
-            || host.hasSuffix("viplenetwork.com")),
-           let serverTrust = challenge.protectionSpace.serverTrust {
+           let serverTrust = challenge.protectionSpace.serverTrust,
+           SecTrustEvaluateWithError(serverTrust, nil) {
             completionHandler(.useCredential, URLCredential(trust: serverTrust))
             return
         }
@@ -31,7 +25,7 @@ public final class VipleMailTLSSessionDelegate: NSObject, URLSessionDelegate, Se
 @MainActor
 public final class VipleMailAPIClient {
     public static let shared = VipleMailAPIClient()
-    public static let clientVersion = "2026.11.18"
+    public static let clientVersion = "2026.11.20"
 
     public let primaryBaseURL = "https://mail.viplemail.fr/api/mobile/v1/mail"
     public let fallbackBaseURL = "https://viplemail.fr/api/mobile/v1/mail"
@@ -950,5 +944,91 @@ public final class VipleMailAPIClient {
             "targetDeviceId": targetDeviceId,
             "targetAppId": targetAppId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "*" : targetAppId
         ])
+    }
+
+    // MARK: - 6. Disponibilité Viple Live ID, Suppression de Compte & Signalement App Store
+
+    public func checkHandleAvailability(
+        handle: String,
+        firstName: String = "",
+        lastName: String = ""
+    ) async throws -> VipleHandleCheckResponse {
+        var items: [URLQueryItem] = [URLQueryItem(name: "handle", value: handle)]
+        if !firstName.isEmpty {
+            items.append(URLQueryItem(name: "firstName", value: firstName))
+        }
+        if !lastName.isEmpty {
+            items.append(URLQueryItem(name: "lastName", value: lastName))
+        }
+        return try await getJSON("/auth/check-handle", queryItems: items)
+    }
+
+    public func deleteVipleAccount(
+        email: String,
+        cid: String?,
+        confirmation: String
+    ) async throws -> VipleAccountDeletionResponse {
+        try await postJSON("/account/delete", body: [
+            "email": email,
+            "cid": cid ?? "",
+            "confirmation": confirmation
+        ])
+    }
+
+    public func reportMessageAbuse(
+        email: String,
+        cid: String?,
+        senderEmail: String,
+        messageId: String?,
+        category: String = "spam_phishing",
+        details: String = "",
+        blockSender: Bool = false
+    ) async throws -> VipleSecurityActionResponse {
+        try await postJSON("/security/report-abuse", body: [
+            "email": email,
+            "cid": cid ?? "",
+            "senderEmail": senderEmail,
+            "messageId": messageId ?? "",
+            "category": category,
+            "details": details,
+            "blockSender": blockSender
+        ])
+    }
+
+    public func blockSender(
+        email: String,
+        cid: String?,
+        senderEmail: String,
+        reason: String = "user_blocked"
+    ) async throws -> VipleSecurityActionResponse {
+        try await postJSON("/security/block-sender", body: [
+            "email": email,
+            "cid": cid ?? "",
+            "senderEmail": senderEmail,
+            "reason": reason
+        ])
+    }
+
+    public func unblockSender(
+        email: String,
+        cid: String?,
+        senderEmail: String
+    ) async throws -> VipleSecurityActionResponse {
+        try await postJSON("/security/unblock-sender", body: [
+            "email": email,
+            "cid": cid ?? "",
+            "senderEmail": senderEmail
+        ])
+    }
+
+    public func fetchBlockedSenders(
+        email: String,
+        cid: String?
+    ) async throws -> VipleSecurityActionResponse {
+        var items: [URLQueryItem] = [URLQueryItem(name: "email", value: email)]
+        if let cid, !cid.isEmpty {
+            items.append(URLQueryItem(name: "cid", value: cid))
+        }
+        return try await getJSON("/security/blocked-senders", queryItems: items)
     }
 }

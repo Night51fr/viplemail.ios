@@ -9,10 +9,12 @@ public struct VipleMailAuthView: View {
 
     public enum AuthTab: String, CaseIterable {
         case login = "Se connecter"
-        case register = "Créer une boîte @viplemail.fr"
+        case register = "Créer un Viple Live ID"
     }
 
     @State private var selectedTab: AuthTab = .login
+    @State private var isShowingLiveIDCreationStudio: Bool = false
+    @State private var studioOrbPulse: Bool = false
     @State private var loginEmail: String = ""
     @State private var loginPassword: String = ""
 
@@ -56,15 +58,26 @@ public struct VipleMailAuthView: View {
 
                         if selectedTab == .login {
                             loginFormCard
+                            vipleLiveIDStudioPromoCard
                         } else {
-                            registerFormCard
+                            vipleLiveIDStudioPromoCard
                         }
 
                         ecosystemFooterCard
+                        authLegalLinksFooter
                     }
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 24)
+            }
+        }
+        .fullScreenCover(isPresented: $isShowingLiveIDCreationStudio) {
+            VipleLiveIDCreationFlowView()
+                .environmentObject(vm)
+        }
+        .onAppear {
+            withAnimation(.easeInOut(duration: 2.1).repeatForever(autoreverses: true)) {
+                studioOrbPulse = true
             }
         }
         .onChange(of: vm.pendingAppleOnboardingUserId) { _, newValue in
@@ -183,6 +196,9 @@ public struct VipleMailAuthView: View {
                         selectedTab = tab
                         localValidationError = nil
                         vm.authErrorMessage = nil
+                    }
+                    if tab == .register {
+                        isShowingLiveIDCreationStudio = true
                     }
                 } label: {
                     Text(tab.rawValue)
@@ -637,6 +653,95 @@ public struct VipleMailAuthView: View {
             }
         }
         .vipleMailCard(cornerRadius: 22, padding: 18)
+    }
+
+    private var vipleLiveIDStudioPromoCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(VipleMailPalette.primary.opacity(0.16))
+                        .frame(width: 52, height: 52)
+                        .scaleEffect(studioOrbPulse ? 1.08 : 0.94)
+
+                    RoundedRectangle(cornerRadius: 15, style: .continuous)
+                        .fill(VipleMailPalette.heroGradient)
+                        .frame(width: 44, height: 44)
+                        .shadow(color: VipleMailPalette.primarySolid.opacity(0.32), radius: 8, y: 4)
+
+                    Image(systemName: "person.badge.shield.checkmark.fill")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text("NOUVEAU • STUDIO INTERACTIF")
+                            .font(.system(size: 10, weight: .black, design: .rounded))
+                            .foregroundStyle(VipleMailPalette.primary)
+                    }
+                    Text("Créer un Viple Live ID")
+                        .font(.system(size: 18, weight: .black, design: .rounded))
+                        .foregroundStyle(VipleMailPalette.ink)
+                    Text("Parcours animé en 4 étapes avec passeport holographique et boîte @viplemail.fr de 5 Go.")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(VipleMailPalette.inkSecondary)
+                }
+                Spacer(minLength: 0)
+            }
+
+            Button {
+                isShowingLiveIDCreationStudio = true
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 15, weight: .bold))
+                    Text("Lancer la création étape par étape")
+                        .font(.system(size: 15, weight: .heavy, design: .rounded))
+                    Spacer()
+                    Image(systemName: "arrow.right.circle.fill")
+                        .font(.system(size: 17, weight: .bold))
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 13.5)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 0.04, green: 0.48, blue: 0.94),
+                                    Color(red: 0.30, green: 0.28, blue: 0.94)
+                                ],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                )
+            }
+            .buttonStyle(.plain)
+        }
+        .vipleMailCard(cornerRadius: 22, padding: 18)
+    }
+
+    private var authLegalLinksFooter: some View {
+        HStack(spacing: 14) {
+            if let privUrl = URL(string: "https://mail.viplemail.fr/privacy") {
+                Link("Politique de confidentialité", destination: privUrl)
+            }
+            Text("•").foregroundStyle(.white.opacity(0.45))
+            if let termsUrl = URL(string: "https://mail.viplemail.fr/terms") {
+                Link("Conditions (EULA)", destination: termsUrl)
+            }
+            Text("•").foregroundStyle(.white.opacity(0.45))
+            if let supUrl = URL(string: "https://mail.viplemail.fr/support") {
+                Link("Assistance", destination: supUrl)
+            }
+        }
+        .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+        .foregroundStyle(.white.opacity(0.86))
+        .multilineTextAlignment(.center)
+        .padding(.top, 2)
     }
 
     private var ecosystemFooterCard: some View {

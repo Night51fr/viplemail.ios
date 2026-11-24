@@ -78,6 +78,9 @@ public final class VipleMailViewModel: ObservableObject {
     @Published public var lastDiagnosticsPing: VipleMailDiagnosticsPing? = nil
     @Published public var connectedDevices: [VipleConnectedDeviceDto] = []
     @Published public var isLoadingConnectedDevices: Bool = false
+    @Published public var isShowingConnectedDevicesSheet: Bool = false
+    @Published public var blockedSenders: [String] = []
+    @Published public var isDeletingAccount: Bool = false
 
     // Apparence & Mode Sombre (Automatique iOS / Clair / Sombre OLED + Rendu adaptatif des e-mails HTML)
     @Published public var appearanceMode: VipleMailAppearanceMode = .system {
@@ -1968,6 +1971,9 @@ public final class VipleMailViewModel: ObservableObject {
                     if lhs.isCurrentDevice != rhs.isCurrentDevice {
                         return lhs.isCurrentDevice && !rhs.isCurrentDevice
                     }
+                    if lhs.effectiveIsConnected != rhs.effectiveIsConnected {
+                        return lhs.effectiveIsConnected && !rhs.effectiveIsConnected
+                    }
                     return (lhs.lastSeenAtUtc ?? lhs.connectedAtUtc ?? "") > (rhs.lastSeenAtUtc ?? rhs.connectedAtUtc ?? "")
                 }
             } else if !silent, let err = res.error {
@@ -2037,6 +2043,112 @@ public final class VipleMailViewModel: ObservableObject {
             }
             showToast(error.localizedDescription)
             return false
+        }
+    }
+
+    // MARK: - 8. Conformité App Store : Suppression Définitive du Compte & Sécurité Anti-Abus
+
+    public func deleteMyVipleAccount(confirmation: String) async -> (ok: Bool, error: String?) {
+        let owner = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
+        guard !owner.isEmpty, owner != "__all__" else {
+            return (false, "Aucun compte actif détecté.")
+        }
+        isDeletingAccount = true
+        defer { isDeletingAccount = false }
+
+        do {
+            let res = try await VipleMailAPIClient.shared.deleteVipleAccount(
+                email: owner,
+                cid: currentCid,
+                confirmation: confirmation
+            )
+            if res.ok {
+                signOut(toastMessage: res.message ?? "Votre compte Viple Live ID a été définitivement supprimé.")
+                return (true, nil)
+            }
+            return (false, res.error ?? "Impossible de supprimer ce compte.")
+        } catch {
+            return (false, error.localizedDescription)
+        }
+    }
+
+    public func refreshBlockedSenders() async {
+        let owner = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
+        guard !owner.isEmpty, owner != "__all__" else { return }
+        if let res = try? await VipleMailAPIClient.shared.fetchBlockedSenders(email: owner, cid: currentCid),
+           let list = res.blockedSenders {
+            self.blockedSenders = list
+        }
+    }
+
+    public func reportMessageAbuse(
+        senderEmail: String,
+        messageId: String?,
+        category: String = "spam_phishing",
+        details: String = "",
+        alsoBlock: Bool = false
+    ) async {
+        let owner = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
+        guard !owner.isEmpty, owner != "__all__" else { return }
+        do {
+            let res = try await VipleMailAPIClient.shared.reportMessageAbuse(
+                email: owner,
+                cid: currentCid,
+                senderEmail: senderEmail,
+                messageId: messageId,
+                category: category,
+                details: details,
+                blockSender: alsoBlock
+            )
+            if alsoBlock {
+                await refreshBlockedSenders()
+            }
+            if let mid = messageId, !mid.isEmpty {
+                await performMessageAction(
+                    messageIds: [mid],
+                    action: "spam",
+                    toast: res.message ?? "Message signalé et déplacé dans Indésirables."
+                )
+                if openedMessage?.id == mid {
+                    closeMessage()
+                }
+            } else {
+                showToast(res.message ?? "Signalement envoyé à l'équipe Sécurité Cenelis.")
+            }
+        } catch {
+            showToast(error.localizedDescription)
+        }
+    }
+
+    public func blockSenderAddress(_ senderEmail: String) async {
+        let owner = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
+        let target = senderEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !owner.isEmpty, !target.isEmpty else { return }
+        do {
+            let res = try await VipleMailAPIClient.shared.blockSender(email: owner, cid: currentCid, senderEmail: target)
+            if let list = res.blockedSenders {
+                self.blockedSenders = list
+            }
+            showToast(res.message ?? "\(target) est désormais bloqué.")
+        } catch {
+            showToast(error.localizedDescription)
+        }
+    }
+
+    public func unblockSenderAddress(_ senderEmail: String) async {
+        let owner = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
+        let target = senderEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !owner.isEmpty, !target.isEmpty else { return }
+        do {
+            let res = try await VipleMailAPIClient.shared.unblockSender(email: owner, cid: currentCid, senderEmail: target)
+            if let list = res.blockedSenders {
+                self.blockedSenders = list
+            } else {
+                self.blockedSenders.removeAll { $0.lowercased() == target }
+            }
+            showToast(res.message ?? "\(target) a été débloqué.")
+        } catch {
+            showToast(error.localizedDescription)
         }
     }
 }

@@ -905,13 +905,14 @@ public struct VipleConnectedAppBadgeDto: Codable, Identifiable, Equatable, Hasha
     public let appVersion: String
     public let notificationsEnabled: Bool
     public let lastSeenAtUtc: String?
+    public let assetIconName: String?
 
     public var id: String {
         "\(appId.lowercased())|\(accountEmail.lowercased())|\(bundleId.lowercased())"
     }
 
     enum CodingKeys: String, CodingKey {
-        case appId, appName, bundleId, icon, colorHex, accountEmail, appVersion, notificationsEnabled, lastSeenAtUtc
+        case appId, appName, bundleId, icon, colorHex, accountEmail, appVersion, notificationsEnabled, lastSeenAtUtc, assetIconName
     }
 
     public init(
@@ -923,7 +924,8 @@ public struct VipleConnectedAppBadgeDto: Codable, Identifiable, Equatable, Hasha
         accountEmail: String,
         appVersion: String,
         notificationsEnabled: Bool,
-        lastSeenAtUtc: String? = nil
+        lastSeenAtUtc: String? = nil,
+        assetIconName: String? = nil
     ) {
         self.appId = appId
         self.appName = appName
@@ -934,6 +936,7 @@ public struct VipleConnectedAppBadgeDto: Codable, Identifiable, Equatable, Hasha
         self.appVersion = appVersion
         self.notificationsEnabled = notificationsEnabled
         self.lastSeenAtUtc = lastSeenAtUtc
+        self.assetIconName = assetIconName
     }
 
     public init(from decoder: Decoder) throws {
@@ -947,6 +950,44 @@ public struct VipleConnectedAppBadgeDto: Codable, Identifiable, Equatable, Hasha
         self.appVersion = (try? c.decode(String.self, forKey: .appVersion)) ?? ""
         self.notificationsEnabled = (try? c.decode(Bool.self, forKey: .notificationsEnabled)) ?? false
         self.lastSeenAtUtc = try? c.decode(String.self, forKey: .lastSeenAtUtc)
+        self.assetIconName = try? c.decode(String.self, forKey: .assetIconName)
+    }
+
+    public var resolvedAssetIconName: String? {
+        if let explicit = assetIconName?.trimmingCharacters(in: .whitespacesAndNewlines), !explicit.isEmpty {
+            return explicit
+        }
+        let lowerId = appId.lowercased()
+        let lowerBundle = bundleId.lowercased()
+        let lowerName = appName.lowercased()
+        if lowerId.contains("mail") || lowerBundle.contains("viplemail") || lowerName.contains("viple mail") {
+            return "EcoIconVipleMail"
+        }
+        if lowerId.contains("livria-store") || lowerBundle == "com.viplenetwork.livria" || lowerName.contains("livria store") {
+            return "EcoIconLivriaStore"
+        }
+        if lowerId.contains("livria-social") || lowerBundle.contains("social") || lowerName.contains("livria social") {
+            return "EcoIconLivriaSocial"
+        }
+        if lowerId.contains("academy") || lowerBundle.contains("academy") || lowerName.contains("academy") {
+            return "EcoIconCenelisAcademy"
+        }
+        if lowerId.contains("taker") || lowerBundle.contains("taker") || lowerName.contains("taker") {
+            return "EcoIconLoobyTaker"
+        }
+        if lowerId.contains("looby") || lowerBundle.contains("looby") || lowerName.contains("looby") {
+            return "EcoIconLooby"
+        }
+        if lowerId.contains("workspace") || lowerName.contains("workspace") {
+            return "EcoIconCenelisWorkspace"
+        }
+        if lowerId.contains("viple-et-moi") || lowerName.contains("viple & moi") {
+            return "EcoIconVipleEtMoi"
+        }
+        if lowerId.contains("marketplace") || lowerName.contains("marketplace") {
+            return "EcoIconLivriaMarketplace"
+        }
+        return nil
     }
 
     public var resolvedSymbolName: String {
@@ -1003,12 +1044,32 @@ public struct VipleConnectedDeviceDto: Codable, Identifiable, Equatable, Hashabl
     public let connectedAtUtc: String?
     public let lastSeenAtUtc: String?
     public var connectedApps: [VipleConnectedAppBadgeDto]
+    public let isConnected: Bool?
+    public let status: String?
+    public let statusLabel: String?
 
     public var id: String { deviceId }
+
+    /// Un appareil est considéré « Connecté » tant qu'au moins une application y maintient une session active sur ce Viple Live ID.
+    /// Dès que l'utilisateur se déconnecte de toutes les applications sur cet appareil, il passe à « Déconnecté ».
+    public var effectiveIsConnected: Bool {
+        if !connectedApps.isEmpty {
+            return true
+        }
+        if let explicit = isConnected {
+            return explicit && !connectedApps.isEmpty
+        }
+        return false
+    }
+
+    public var effectiveStatusLabel: String {
+        effectiveIsConnected ? "Connecté" : "Déconnecté"
+    }
 
     enum CodingKeys: String, CodingKey {
         case deviceId, rawDeviceIds, modelName, modelCode, platform, osVersion
         case isCurrentDevice, pushActive, connectedAtUtc, lastSeenAtUtc, connectedApps
+        case isConnected, status, statusLabel
     }
 
     public init(
@@ -1022,7 +1083,10 @@ public struct VipleConnectedDeviceDto: Codable, Identifiable, Equatable, Hashabl
         pushActive: Bool,
         connectedAtUtc: String? = nil,
         lastSeenAtUtc: String? = nil,
-        connectedApps: [VipleConnectedAppBadgeDto] = []
+        connectedApps: [VipleConnectedAppBadgeDto] = [],
+        isConnected: Bool? = nil,
+        status: String? = nil,
+        statusLabel: String? = nil
     ) {
         self.deviceId = deviceId
         self.rawDeviceIds = rawDeviceIds
@@ -1035,6 +1099,9 @@ public struct VipleConnectedDeviceDto: Codable, Identifiable, Equatable, Hashabl
         self.connectedAtUtc = connectedAtUtc
         self.lastSeenAtUtc = lastSeenAtUtc
         self.connectedApps = connectedApps
+        self.isConnected = isConnected ?? !connectedApps.isEmpty
+        self.status = status ?? (!connectedApps.isEmpty ? "connected" : "disconnected")
+        self.statusLabel = statusLabel ?? (!connectedApps.isEmpty ? "Connecté" : "Déconnecté")
     }
 
     public init(from decoder: Decoder) throws {
@@ -1050,6 +1117,9 @@ public struct VipleConnectedDeviceDto: Codable, Identifiable, Equatable, Hashabl
         self.connectedAtUtc = try? c.decode(String.self, forKey: .connectedAtUtc)
         self.lastSeenAtUtc = try? c.decode(String.self, forKey: .lastSeenAtUtc)
         self.connectedApps = (try? c.decode([VipleConnectedAppBadgeDto].self, forKey: .connectedApps)) ?? []
+        self.isConnected = try? c.decode(Bool.self, forKey: .isConnected)
+        self.status = try? c.decode(String.self, forKey: .status)
+        self.statusLabel = try? c.decode(String.self, forKey: .statusLabel)
     }
 
     public var resolvedModelDisplayName: String {
@@ -1144,4 +1214,41 @@ public struct VipleDeviceRevokeResponse: Codable, Sendable {
     public let message: String?
     public let error: String?
     public let revokedCurrentDevice: Bool?
+}
+
+public struct VipleHandleCheckResponse: Codable, Sendable {
+    public let ok: Bool
+    public let available: Bool
+    public let handle: String
+    public let email: String
+    public let reason: String?
+    public let suggestions: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case ok, available, handle, email, reason, suggestions
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.ok = (try? c.decode(Bool.self, forKey: .ok)) ?? false
+        self.available = (try? c.decode(Bool.self, forKey: .available)) ?? false
+        self.handle = (try? c.decode(String.self, forKey: .handle)) ?? ""
+        self.email = (try? c.decode(String.self, forKey: .email)) ?? ""
+        self.reason = try? c.decode(String.self, forKey: .reason)
+        self.suggestions = (try? c.decode([String].self, forKey: .suggestions)) ?? []
+    }
+}
+
+public struct VipleAccountDeletionResponse: Codable, Sendable {
+    public let ok: Bool
+    public let message: String?
+    public let error: String?
+}
+
+public struct VipleSecurityActionResponse: Codable, Sendable {
+    public let ok: Bool
+    public let reportId: String?
+    public let blockedSenders: [String]?
+    public let message: String?
+    public let error: String?
 }

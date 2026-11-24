@@ -534,6 +534,28 @@ public struct MailChatConversationView: View {
                         Label("Envoyer un e-mail classique", systemImage: "envelope.fill")
                     }
 
+                    Button {
+                        Task {
+                            await vm.reportMessageAbuse(
+                                senderEmail: activeSession.peerEmail,
+                                messageId: nil,
+                                category: "chat_abuse",
+                                alsoBlock: false
+                            )
+                        }
+                    } label: {
+                        Label("Signaler un comportement abusif", systemImage: "flag.badge.ellipsis")
+                    }
+
+                    Button(role: .destructive) {
+                        Task {
+                            await vm.blockSenderAddress(activeSession.peerEmail)
+                            await vm.deleteChatSession(activeSession)
+                        }
+                    } label: {
+                        Label("Bloquer ce contact", systemImage: "hand.raised.fill")
+                    }
+
                     Divider()
 
                     Button(role: .destructive) {
