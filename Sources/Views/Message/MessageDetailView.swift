@@ -504,7 +504,7 @@ private struct VipleMailHTMLWebView: UIViewRepresentable {
                 if let result = try? await webView.evaluateJavaScript("Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)") {
                     if let num = result as? NSNumber {
                         let h = CGFloat(truncating: num)
-                        if h > 0 && self.parent.dynamicHeight <= 225 {
+                        if h > 40 {
                             self.applyMeasuredHeight(h + 18)
                         }
                     }
@@ -549,10 +549,13 @@ public struct MessageDetailView: View {
     }
 
     private var currentMessage: VipleMailMessage {
-        if let unlocked = pinUnlockedMessage, unlocked.id == message.id {
+        if let unlocked = pinUnlockedMessage,
+           unlocked.id == message.id || (unlocked.mailRteId != nil && unlocked.mailRteId == message.mailRteId) {
             return unlocked
         }
-        return vm.messages.first(where: { $0.id == message.id }) ?? message
+        return vm.messages.first(where: {
+            $0.id == message.id && ($0.mailboxEmail ?? "").lowercased() == (message.mailboxEmail ?? "").lowercased()
+        }) ?? vm.messages.first(where: { $0.id == message.id }) ?? message
     }
 
     private var previousEmailsInThread: [VipleMailMessage] {
@@ -627,7 +630,7 @@ public struct MessageDetailView: View {
             }
 
             ToolbarItemGroup(placement: .topBarTrailing) {
-                if colorScheme == .dark && hasRichHTML(currentMessage.bodyHtml) {
+                if colorScheme == .dark && !currentMessage.isLockedByCenelisPin && hasRichHTML(currentMessage.bodyHtml) {
                     Button {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             if vm.adaptHtmlEmailsInDarkMode {
@@ -1053,14 +1056,14 @@ public struct MessageDetailView: View {
 
     private func classicEmailBodySection(_ msg: VipleMailMessage) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            if msg.requiresCenelisPin == true && msg.bodyHtml.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if msg.isLockedByCenelisPin {
                 MailRteCenelisPinGateView(
                     message: msg,
-                    mailboxEmail: vm.primaryHostedEmail.isEmpty ? vm.currentEmail : vm.primaryHostedEmail,
+                    mailboxEmail: msg.effectiveMailboxEmail(fallback: vm.primaryHostedEmail.isEmpty ? vm.currentEmail : vm.primaryHostedEmail),
                     cid: vm.currentCid
                 ) { unlocked in
                     withAnimation(.spring(response: 0.38, dampingFraction: 0.84)) {
-                        htmlContentHeight = 260
+                        htmlContentHeight = 220
                         pinUnlockedMessage = unlocked
                     }
                 }

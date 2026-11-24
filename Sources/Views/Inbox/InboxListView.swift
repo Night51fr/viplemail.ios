@@ -596,6 +596,30 @@ public struct InboxListView: View {
                             .background(Capsule().fill(VipleMailPalette.vipGold))
                     }
 
+                    if msg.requiresCenelisPin == true {
+                        HStack(spacing: 3) {
+                            Image(systemName: "lock.shield.fill")
+                                .font(.system(size: 8.5, weight: .bold))
+                            Text("PIN")
+                                .font(.system(size: 9, weight: .black, design: .rounded))
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule().fill(
+                                LinearGradient(
+                                    colors: [
+                                        Color(red: 0.31, green: 0.27, blue: 0.90),
+                                        Color(red: 0.01, green: 0.52, blue: 0.78)
+                                    ],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                        )
+                    }
+
                     Spacer()
 
                     if msg.hasAttachments {

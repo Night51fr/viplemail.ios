@@ -308,6 +308,13 @@ public struct VipleMailMessage: Codable, Identifiable, Equatable, Hashable, Send
         return fallback
     }
 
+    /// Vrai tant que ce courrier Cenelis MailRTE exige la saisie du code PIN Cenelis Connect avant déchiffrement de sa vue.
+    public var isLockedByCenelisPin: Bool {
+        guard requiresCenelisPin == true else { return false }
+        let trimmed = bodyHtml.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty || trimmed.contains("data-cenelis-pin-locked")
+    }
+
     public var isChatDelivery: Bool {
         (deliveryMode ?? "mail").lowercased() == "chat"
     }
@@ -390,7 +397,13 @@ public struct VipleMailMessage: Codable, Identifiable, Equatable, Hashable, Send
     }
 
     public var plainBodyText: String {
-        let withNewlines = bodyHtml
+        if isLockedByCenelisPin {
+            return "🔒 Contenu interne Agents Cenelis — Code PIN Cenelis Connect requis."
+        }
+        let withoutScriptsOrStyles = bodyHtml
+            .replacingOccurrences(of: "(?is)<script\\b[^>]*>.*?</script>", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "(?is)<style\\b[^>]*>.*?</style>", with: "", options: .regularExpression)
+        let withNewlines = withoutScriptsOrStyles
             .replacingOccurrences(of: "<br/>", with: "\n", options: .caseInsensitive)
             .replacingOccurrences(of: "<br>", with: "\n", options: .caseInsensitive)
             .replacingOccurrences(of: "</p>", with: "\n\n", options: .caseInsensitive)

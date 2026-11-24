@@ -491,9 +491,10 @@ public struct MailRteCenelisPinGateView: View {
 
             // Pavé numérique tactile natif Cenelis Connect
             VStack(spacing: 10) {
-                ForEach([[1, 2, 3], [4, 5, 6], [7, 8, 9]], id: \.self) { row in
+                let keypadRows: [[Int]] = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+                ForEach(0..<keypadRows.count, id: \.self) { rowIdx in
                     HStack(spacing: 12) {
-                        ForEach(row, id: \.self) { digit in
+                        ForEach(keypadRows[rowIdx], id: \.self) { digit in
                             pinDigitButton("\(digit)") {
                                 appendDigit("\(digit)")
                             }
@@ -605,13 +606,16 @@ public struct MailRteCenelisPinGateView: View {
 
     private func loadAgentPinConfiguration() async {
         defer { isCheckingInfo = false }
-        guard !mailboxEmail.isEmpty else { return }
-        if let info = try? await VipleMailAPIClient.shared.fetchMailRtePinInfo(email: mailboxEmail, cid: cid) {
+        let targetMbx = message.effectiveMailboxEmail(fallback: mailboxEmail)
+        guard !targetMbx.isEmpty else { return }
+        if let info = try? await VipleMailAPIClient.shared.fetchMailRtePinInfo(email: targetMbx, cid: cid) {
             if let len = info.pinLength, (len == 4 || len == 6) {
                 expectedPinLength = len
             }
             if info.isAgent == false {
                 errorMessage = info.error ?? "Accès réservé aux Agents Cenelis."
+            } else if info.needsSetup == true || info.hasPin == false {
+                errorMessage = info.error ?? "Configurez d'abord votre code PIN Cenelis Connect depuis la Console Admin ou Cenelis Connect."
             }
         }
     }
