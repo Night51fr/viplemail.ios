@@ -315,7 +315,8 @@ public struct VipleMailMessage: Codable, Identifiable, Equatable, Hashable, Send
         return String(clean[clean.index(after: at)...])
     }
 
-    /// Badge expéditeur vérifié : UNIQUEMENT pour @viplenetwork.com / @cenelis.com (« Cenelis SA ») ou un service officiel authentifié par DKIM/DMARC (ex : « Facebook Inc »). Jamais pour @viplemail.fr.
+    /// Badge expéditeur vérifié : attribué aux domaines internes Groupe Cenelis (@cenelis.com / @viplenetwork.com / @livria.store / @looby.fr)
+    /// ainsi qu'aux grandes entreprises et institutions authentifiées cryptographiquement par DKIM / SPF / DMARC côté serveur. Jamais pour @viplemail.fr.
     public var effectiveVerifiedOrganization: String? {
         let dom = normalizedSenderDomain
         if dom == "viplemail.fr" || dom.hasSuffix(".viplemail.fr") {
@@ -326,12 +327,18 @@ public struct VipleMailMessage: Codable, Identifiable, Equatable, Hashable, Send
             if let org = verifiedOrganization, !org.isEmpty {
                 return org
             }
-            if dom == "cenelis.com" || dom.hasSuffix(".cenelis.com") || dom == "viplenetwork.com" || dom.hasSuffix(".viplenetwork.com") {
+            if dom == "cenelis.com" || dom.hasSuffix(".cenelis.com") || dom == "cenelis.fr" || dom.hasSuffix(".cenelis.fr") || dom == "viplenetwork.com" || dom.hasSuffix(".viplenetwork.com") || dom == "viple.digital" || dom.hasSuffix(".viple.digital") {
                 return "Cenelis SA"
+            }
+            if dom == "livria.store" || dom.hasSuffix(".livria.store") {
+                return "Livria (Groupe Cenelis)"
+            }
+            if dom == "looby.fr" || dom.hasSuffix(".looby.fr") {
+                return "Looby (Groupe Cenelis)"
             }
             return nil
         }
-        if dom == "cenelis.com" || dom.hasSuffix(".cenelis.com") || dom == "viplenetwork.com" || dom.hasSuffix(".viplenetwork.com") {
+        if dom == "cenelis.com" || dom.hasSuffix(".cenelis.com") || dom == "cenelis.fr" || dom.hasSuffix(".cenelis.fr") || dom == "viplenetwork.com" || dom.hasSuffix(".viplenetwork.com") {
             return "Cenelis SA"
         }
         return nil
@@ -790,6 +797,7 @@ public enum MailComposeMode: Equatable, Sendable {
 public enum MailFilterChip: String, CaseIterable, Identifiable, Sendable {
     case all = "Tous"
     case unread = "Non lus"
+    case verified = "Certifiés"
     case starred = "Favoris"
     case vip = "Contacts VIP"
     case attachments = "Pièces jointes"
@@ -801,6 +809,7 @@ public enum MailFilterChip: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .all: return "tray.full.fill"
         case .unread: return "envelope.badge.fill"
+        case .verified: return "checkmark.seal.fill"
         case .starred: return "star.fill"
         case .vip: return "crown.fill"
         case .attachments: return "paperclip"

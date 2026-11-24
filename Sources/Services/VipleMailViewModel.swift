@@ -412,6 +412,8 @@ public final class VipleMailViewModel: ObservableObject {
             break
         case .unread:
             list = list.filter { !$0.isRead }
+        case .verified:
+            list = list.filter { $0.shouldShowVerifiedSenderBadge }
         case .starred:
             list = list.filter { $0.isStarred }
         case .vip:
@@ -428,6 +430,7 @@ public final class VipleMailViewModel: ObservableObject {
                 m.subject.lowercased().contains(trimmedQuery) ||
                 m.senderName.lowercased().contains(trimmedQuery) ||
                 m.senderEmail.lowercased().contains(trimmedQuery) ||
+                (m.effectiveVerifiedOrganization?.lowercased().contains(trimmedQuery) == true) ||
                 m.recipientEmail.lowercased().contains(trimmedQuery) ||
                 m.snippet.lowercased().contains(trimmedQuery) ||
                 m.plainBodyText.lowercased().contains(trimmedQuery)
