@@ -39,13 +39,13 @@ private enum VipleMailBackgroundRuntime {
 
     static func scheduleAll() {
         let refreshReq = BGAppRefreshTaskRequest(identifier: refreshIdentifier)
-        refreshReq.earliestBeginDate = Date(timeIntervalSinceNow: 60)
+        refreshReq.earliestBeginDate = Date(timeIntervalSinceNow: 35)
         try? BGTaskScheduler.shared.submit(refreshReq)
 
         let procReq = BGProcessingTaskRequest(identifier: processingIdentifier)
         procReq.requiresNetworkConnectivity = true
         procReq.requiresExternalPower = false
-        procReq.earliestBeginDate = Date(timeIntervalSinceNow: 180)
+        procReq.earliestBeginDate = Date(timeIntervalSinceNow: 120)
         try? BGTaskScheduler.shared.submit(procReq)
     }
 
@@ -108,6 +108,8 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
     }
     @Published public private(set) var apnsDeviceTokenHex: String? = nil
     @Published public private(set) var lastBackgroundSyncDate: Date? = nil
+    @Published public private(set) var isServerApnsConfigured: Bool = true
+    @Published public private(set) var apnsStatusDetails: VipleMailApnsStatusResponse? = nil
 
     /// Référence faible au ViewModel actif pour navigation directe et rafraîchissement temps réel
     public weak var attachedViewModel: VipleMailViewModel?
@@ -123,6 +125,7 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
 
     private var foregroundPollingTask: Task<Void, Never>? = nil
     private var backgroundGraceLoopTask: Task<Void, Never>? = nil
+    private var isPollInFlight: Bool = false
     #if canImport(UIKit)
     private var backgroundGraceTaskId: UIBackgroundTaskIdentifier = .invalid
     #endif
@@ -284,6 +287,17 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
                 notificationsEnabled: pushEnabled,
                 vipOnly: vipOnly
             )
+            await refreshServerApnsStatus()
+        }
+    }
+
+    public func refreshServerApnsStatus() async {
+        let ownerEmail = resolvedOwnerMailboxEmail()
+        guard !ownerEmail.isEmpty else { return }
+        let cid = attachedViewModel?.currentCid ?? defaults.string(forKey: savedCidKey)
+        if let status = try? await VipleMailAPIClient.shared.fetchApnsStatus(email: ownerEmail, cid: cid) {
+            self.apnsStatusDetails = status
+            self.isServerApnsConfigured = status.configured
         }
     }
 
@@ -298,6 +312,29 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
             if isOsAuthorized {
                 registerForRemoteNotificationsOnSystem()
             }
+            if let hex = apnsDeviceTokenHex, !hex.isEmpty {
+                let ownerEmail = resolvedOwnerMailboxEmail()
+                let cid = attachedViewModel?.currentCid ?? defaults.string(forKey: savedCidKey)
+                let pushEnabled = attachedViewModel?.settings.pushNotificationsEnabled ?? true
+                let vipOnly = attachedViewModel?.settings.vipNotificationsOnly ?? false
+                if !ownerEmail.isEmpty {
+                    await VipleMailAPIClient.shared.registerDeviceForPush(
+                        email: ownerEmail,
+                        cid: cid,
+                        apnsToken: hex,
+                        notificationsEnabled: pushEnabled,
+                        vipOnly: vipOnly
+                    )
+                }
+            }
+            await refreshServerApnsStatus()
+        }
+    }
+
+    public func handleSceneBecameInactive() {
+        scheduleBackgroundTasks()
+        Task {
+            _ = await performNotificationPollCycle(isBackground: true)
         }
     }
 
@@ -311,11 +348,11 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
         foregroundPollingTask?.cancel()
         foregroundPollingTask = Task { [weak self] in
             guard let self else { return }
-            await self.performNotificationPollCycle(isBackground: false)
+            _ = await self.performNotificationPollCycle(isBackground: false)
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 12_000_000_000) // Sondage toutes les 12 secondes au premier plan
+                try? await Task.sleep(nanoseconds: 10_000_000_000) // Sondage toutes les 10 secondes au premier plan
                 if Task.isCancelled { break }
-                await self.performNotificationPollCycle(isBackground: false)
+                _ = await self.performNotificationPollCycle(isBackground: false)
             }
         }
     }
@@ -348,19 +385,35 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
 
         backgroundGraceLoopTask = Task { [weak self] in
             guard let self else { return }
+            if let hex = self.apnsDeviceTokenHex, !hex.isEmpty {
+                let ownerEmail = self.resolvedOwnerMailboxEmail()
+                let cid = self.attachedViewModel?.currentCid ?? self.defaults.string(forKey: self.savedCidKey)
+                let pushEnabled = self.attachedViewModel?.settings.pushNotificationsEnabled ?? true
+                let vipOnly = self.attachedViewModel?.settings.vipNotificationsOnly ?? false
+                if !ownerEmail.isEmpty {
+                    await VipleMailAPIClient.shared.registerDeviceForPush(
+                        email: ownerEmail,
+                        cid: cid,
+                        apnsToken: hex,
+                        notificationsEnabled: pushEnabled,
+                        vipOnly: vipOnly
+                    )
+                }
+            }
+
             _ = await self.performNotificationPollCycle(isBackground: true)
 
             // Tant qu'iOS accorde du temps d'exécution en arrière-plan après verrouillage ou retour à l'accueil,
-            // on continue de vérifier les nouveaux courriers toutes les 6 secondes puis on rend la main proprement.
+            // on vérifie les nouveaux courriers toutes les 3,5 secondes avec rendu d'avatar local instantané (< 5 ms).
             while !Task.isCancelled {
                 let remaining = UIApplication.shared.backgroundTimeRemaining
-                if remaining != .greatestFiniteMagnitude && remaining < 5.5 {
+                if remaining != .greatestFiniteMagnitude && remaining < 3.8 {
                     break
                 }
-                try? await Task.sleep(nanoseconds: 6_000_000_000)
+                try? await Task.sleep(nanoseconds: 3_500_000_000)
                 if Task.isCancelled { break }
                 let remAfterSleep = UIApplication.shared.backgroundTimeRemaining
-                if remAfterSleep != .greatestFiniteMagnitude && remAfterSleep < 4.0 {
+                if remAfterSleep != .greatestFiniteMagnitude && remAfterSleep < 3.0 {
                     break
                 }
                 _ = await self.performNotificationPollCycle(isBackground: true)
@@ -399,7 +452,7 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
         #endif
     }
 
-    // MARK: - 3. Moteur de Détection Multi-Boîtes, Bannières Riches & Badge Icône
+    // MARK: - 3. Moteur de Détection Multi-Boîtes (Anneau Ordonné Anti-Perte), Bannières Riches & Badge Icône
 
     private func resolvedOwnerMailboxEmail() -> String {
         if let vm = attachedViewModel, !vm.primaryHostedEmail.isEmpty {
@@ -426,13 +479,25 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
         "viple.mail.notif.baselineDone.\(ownerMailbox.lowercased())"
     }
 
-    private func loadSeenMessageIds(for ownerMailbox: String) -> Set<String> {
+    /// Charge l'anneau ordonné des identifiants déjà traités (FIFO strict, jamais un `Set` non ordonné tronqué au hasard).
+    private func loadSeenMessageIdsOrdered(for ownerMailbox: String) -> (ordered: [String], lookup: Set<String>) {
         let arr = defaults.stringArray(forKey: seenIdsStorageKey(for: ownerMailbox)) ?? []
-        return Set(arr)
+        return (arr, Set(arr))
     }
 
-    private func saveSeenMessageIds(_ ids: Set<String>, for ownerMailbox: String) {
-        let capped = Array(ids.suffix(500))
+    private func appendSeenMessageIds(_ newIds: [String], for ownerMailbox: String) {
+        guard !newIds.isEmpty else { return }
+        var (ordered, lookup) = loadSeenMessageIdsOrdered(for: ownerMailbox)
+        var changed = false
+        for id in newIds where !id.isEmpty {
+            if !lookup.contains(id) {
+                lookup.insert(id)
+                ordered.append(id)
+                changed = true
+            }
+        }
+        guard changed else { return }
+        let capped = ordered.count > 700 ? Array(ordered.suffix(700)) : ordered
         defaults.set(capped, forKey: seenIdsStorageKey(for: ownerMailbox))
     }
 
@@ -461,46 +526,58 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
         await applyAppBadgeCount(settings.pushNotificationsEnabled && badgeEnabled ? unreadCount : 0)
 
         let baselineKey = baselineDoneStorageKey(for: ownerKey)
-        var seen = loadSeenMessageIds(for: ownerKey)
+        let (_, seenLookup) = loadSeenMessageIdsOrdered(for: ownerKey)
         let isFirstBaseline = !defaults.bool(forKey: baselineKey)
 
         if isFirstBaseline {
+            var initialIds: [String] = []
             for m in messages {
                 let mBox = m.effectiveMailboxEmail(fallback: ownerKey)
-                seen.insert("\(mBox)|\(m.id)")
-                seen.insert(m.id)
+                initialIds.append("\(mBox)|\(m.id)")
+                initialIds.append(m.id)
             }
-            saveSeenMessageIds(seen, for: ownerKey)
+            appendSeenMessageIds(initialIds, for: ownerKey)
             defaults.set(true, forKey: baselineKey)
             return
         }
 
         guard settings.pushNotificationsEnabled, isOsAuthorized else {
+            var silentIds: [String] = []
             for m in messages where !m.isRead && m.folder.caseInsensitiveCompare("Inbox") == .orderedSame {
                 let mBox = m.effectiveMailboxEmail(fallback: ownerKey)
-                seen.insert("\(mBox)|\(m.id)")
-                seen.insert(m.id)
+                silentIds.append("\(mBox)|\(m.id)")
+                silentIds.append(m.id)
             }
-            saveSeenMessageIds(seen, for: ownerKey)
+            appendSeenMessageIds(silentIds, for: ownerKey)
             return
         }
 
+        #if canImport(UIKit)
+        let appIsNotActive = UIApplication.shared.applicationState != .active
+        #else
+        let appIsNotActive = false
+        #endif
+
+        let deliveredNotifs = await UNUserNotificationCenter.current().deliveredNotifications()
+        let alreadyDeliveredIds = Set(deliveredNotifs.compactMap { $0.request.content.userInfo["messageId"] as? String })
+
         let unseenInbox = messages.filter { !$0.isRead && $0.folder.caseInsensitiveCompare("Inbox") == .orderedSame }
-        var newlyArrived: [(item: VipleMailNotificationItem, targetMbx: String)] = []
+        var immediateCommitIds: [String] = []
+        var newlyArrived: [(item: VipleMailNotificationItem, targetMbx: String, compKey: String)] = []
 
         for msg in unseenInbox {
             let mBox = msg.effectiveMailboxEmail(fallback: ownerKey)
             let compKey = "\(mBox)|\(msg.id)"
-            guard !seen.contains(compKey), !seen.contains(msg.id) else { continue }
+            guard !seenLookup.contains(compKey), !seenLookup.contains(msg.id) else { continue }
 
-            seen.insert(compKey)
-            seen.insert(msg.id)
-            if settings.vipNotificationsOnly && !msg.isVipSender {
+            if alreadyDeliveredIds.contains(msg.id)
+                || (settings.vipNotificationsOnly && !msg.isVipSender)
+                || (!appIsNotActive && attachedViewModel?.openedMessage?.id == msg.id) {
+                immediateCommitIds.append(compKey)
+                immediateCommitIds.append(msg.id)
                 continue
             }
-            if attachedViewModel?.openedMessage?.id == msg.id {
-                continue
-            }
+
             newlyArrived.append((
                 VipleMailNotificationItem(
                     id: msg.id,
@@ -516,19 +593,50 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
                     receivedAt: msg.receivedAt,
                     mailboxEmail: mBox
                 ),
-                mBox
+                mBox,
+                compKey
             ))
         }
 
-        saveSeenMessageIds(seen, for: ownerKey)
+        appendSeenMessageIds(immediateCommitIds, for: ownerKey)
 
-        for entry in newlyArrived.prefix(5) {
-            await scheduleRichMailNotification(for: entry.item, mailboxEmail: entry.targetMbx)
+        // RÈGLE CRITIQUE : on ne marque un courrier comme « notifié » dans UserDefaults
+        // QU'APRÈS confirmation effective d'ajout dans UNUserNotificationCenter !
+        for (idx, entry) in newlyArrived.enumerated() {
+            if idx < 5 {
+                let delivered = await scheduleRichMailNotification(
+                    for: entry.item,
+                    mailboxEmail: entry.targetMbx,
+                    skipRemoteAvatar: appIsNotActive
+                )
+                if delivered {
+                    appendSeenMessageIds([entry.compKey, entry.item.id], for: ownerKey)
+                }
+            } else {
+                appendSeenMessageIds([entry.compKey, entry.item.id], for: ownerKey)
+            }
         }
     }
 
+    /// Exécute un cycle de sondage protégé contre l'annulation intempestive lors des transitions Premier Plan <-> Arrière-Plan.
     @discardableResult
     public func performNotificationPollCycle(isBackground: Bool) async -> Bool {
+        if isPollInFlight {
+            return true
+        }
+        isPollInFlight = true
+        defer { isPollInFlight = false }
+
+        // Exécution dans une sous-tâche non héritière de l'annulation de `foregroundPollingTask`
+        // afin qu'un verrouillage d'écran pendant un sondage n'annule JAMAIS l'émission de la bannière iOS.
+        let uninterruptibleCycle = Task { @MainActor [weak self] () -> Bool in
+            guard let self else { return false }
+            return await self.executeNotificationPollCycleCore(isBackground: isBackground)
+        }
+        return await uninterruptibleCycle.value
+    }
+
+    private func executeNotificationPollCycleCore(isBackground: Bool) async -> Bool {
         let ownerEmail = resolvedOwnerMailboxEmail()
         let cid = attachedViewModel?.currentCid ?? defaults.string(forKey: savedCidKey)
 
@@ -540,16 +648,26 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
 
         guard !ownerEmail.isEmpty else { return true }
 
+        #if canImport(UIKit)
+        let effectiveBackground = isBackground || UIApplication.shared.applicationState != .active
+        #else
+        let effectiveBackground = isBackground
+        #endif
+
         do {
             let poll = try await VipleMailAPIClient.shared.pollNotifications(
                 email: ownerEmail,
                 cid: cid,
                 limit: 15,
-                allMailboxes: true
+                allMailboxes: true,
+                fastBackground: effectiveBackground
             )
             guard poll.ok else { return false }
 
             self.lastBackgroundSyncDate = Date()
+            if let srvApns = poll.apnsServerConfigured {
+                self.isServerApnsConfigured = srvApns
+            }
             await refreshAuthorizationStatus()
 
             let effectivePushEnabled = poll.pushNotificationsEnabled
@@ -557,20 +675,20 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
             await applyAppBadgeCount(effectivePushEnabled && badgeEnabled ? totalUnread : 0)
 
             let baselineKey = baselineDoneStorageKey(for: ownerEmail)
-            var seen = loadSeenMessageIds(for: ownerEmail)
+            let (_, seenLookup) = loadSeenMessageIdsOrdered(for: ownerEmail)
             let isFirstBaseline = !defaults.bool(forKey: baselineKey)
 
-            // Récupère les notifications déjà affichées dans le centre iOS (ex. poussées en direct via APNs) pour éviter tout doublon
             let deliveredNotifs = await UNUserNotificationCenter.current().deliveredNotifications()
             let alreadyDeliveredIds = Set(deliveredNotifs.compactMap { $0.request.content.userInfo["messageId"] as? String })
 
-            if isFirstBaseline && !isBackground {
+            if isFirstBaseline && !effectiveBackground {
+                var initialIds: [String] = []
                 for item in poll.recentUnseen {
                     let itemMbx = (item.mailboxEmail ?? ownerEmail).lowercased()
-                    seen.insert("\(itemMbx)|\(item.id)")
-                    seen.insert(item.id)
+                    initialIds.append("\(itemMbx)|\(item.id)")
+                    initialIds.append(item.id)
                 }
-                saveSeenMessageIds(seen, for: ownerEmail)
+                appendSeenMessageIds(initialIds, for: ownerEmail)
                 defaults.set(true, forKey: baselineKey)
                 return true
             }
@@ -580,43 +698,73 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
             }
 
             var hasNewChanges = false
-            var toNotify: [(item: VipleMailNotificationItem, targetMbx: String)] = []
+            var silentCommitIds: [String] = []
+            var toNotify: [(item: VipleMailNotificationItem, targetMbx: String, compKey: String)] = []
 
             for item in poll.recentUnseen {
                 let itemMbx = (item.mailboxEmail ?? ownerEmail).lowercased()
                 let compKey = "\(itemMbx)|\(item.id)"
 
-                if !seen.contains(compKey) && !seen.contains(item.id) {
-                    seen.insert(compKey)
-                    seen.insert(item.id)
+                if !seenLookup.contains(compKey) && !seenLookup.contains(item.id) {
                     hasNewChanges = true
 
                     if isFirstBaseline && !Self.isRecentArrival(item.receivedAt, maxMinutesAgo: 15) {
+                        silentCommitIds.append(compKey)
+                        silentCommitIds.append(item.id)
                         continue
                     }
                     if alreadyDeliveredIds.contains(item.id) {
+                        silentCommitIds.append(compKey)
+                        silentCommitIds.append(item.id)
                         continue
                     }
                     if effectivePushEnabled && isOsAuthorized {
                         if poll.vipNotificationsOnly && !item.isVipSender {
+                            silentCommitIds.append(compKey)
+                            silentCommitIds.append(item.id)
                             continue
                         }
-                        if !isBackground, attachedViewModel?.openedMessage?.id == item.id {
+                        if !effectiveBackground, attachedViewModel?.openedMessage?.id == item.id {
+                            silentCommitIds.append(compKey)
+                            silentCommitIds.append(item.id)
                             continue
                         }
-                        if !isBackground,
+                        if !effectiveBackground,
                            let chatSid = item.chatSessionId, !chatSid.isEmpty,
                            attachedViewModel?.openedChatSession?.id == chatSid {
+                            silentCommitIds.append(compKey)
+                            silentCommitIds.append(item.id)
                             continue
                         }
-                        toNotify.append((item, itemMbx))
+                        toNotify.append((item, itemMbx, compKey))
+                    } else {
+                        silentCommitIds.append(compKey)
+                        silentCommitIds.append(item.id)
                     }
                 }
             }
 
-            saveSeenMessageIds(seen, for: ownerEmail)
+            appendSeenMessageIds(silentCommitIds, for: ownerEmail)
 
-            if !isBackground,
+            // 1. PRIORITÉ ABSOLUE : déclencher les notifications système iOS AVANT tout rafraîchissement UI,
+            // et ne persister `seen` qu'après réussite effective de `UNUserNotificationCenter.add` !
+            for (idx, entry) in toNotify.enumerated() {
+                if idx < 5 {
+                    let delivered = await scheduleRichMailNotification(
+                        for: entry.item,
+                        mailboxEmail: entry.targetMbx,
+                        skipRemoteAvatar: effectiveBackground
+                    )
+                    if delivered {
+                        appendSeenMessageIds([entry.compKey, entry.item.id], for: ownerEmail)
+                    }
+                } else {
+                    appendSeenMessageIds([entry.compKey, entry.item.id], for: ownerEmail)
+                }
+            }
+
+            // 2. Ensuite seulement, si l'application est active au premier plan, synchroniser la liste à l'écran
+            if !effectiveBackground,
                let vm = attachedViewModel,
                (hasNewChanges || vm.unreadInboxCount != poll.inboxUnreadCount || vm.chatUnreadCount != (poll.chatUnreadCount ?? 0)) {
                 await vm.refreshBootstrap()
@@ -625,17 +773,18 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
                 }
             }
 
-            for entry in toNotify.prefix(5) {
-                await scheduleRichMailNotification(for: entry.item, mailboxEmail: entry.targetMbx)
-            }
-
             return true
         } catch {
             return false
         }
     }
 
-    public func scheduleRichMailNotification(for item: VipleMailNotificationItem, mailboxEmail: String) async {
+    @discardableResult
+    public func scheduleRichMailNotification(
+        for item: VipleMailNotificationItem,
+        mailboxEmail: String,
+        skipRemoteAvatar: Bool = false
+    ) async -> Bool {
         let content = UNMutableNotificationContent()
         let vipPrefix = item.isVipSender ? "👑 " : ""
         let urgentPrefix = (item.priority.lowercased() == "high" || item.priority.lowercased() == "haute") ? "❗ " : ""
@@ -668,7 +817,8 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
             senderName: item.senderName,
             senderEmail: item.senderEmail,
             avatarUrl: item.senderAvatarUrl,
-            isVip: item.isVipSender
+            isVip: item.isVipSender,
+            skipRemoteDownload: skipRemoteAvatar
         ) {
             content.attachments = [avatarAttachment]
         }
@@ -678,7 +828,12 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
             content: content,
             trigger: nil
         )
-        try? await UNUserNotificationCenter.current().add(req)
+        do {
+            try await UNUserNotificationCenter.current().add(req)
+            return true
+        } catch {
+            return false
+        }
     }
 
     public func sendTestNotification(mailboxEmail: String) async -> Bool {
@@ -699,8 +854,11 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
             receivedAt: ISO8601DateFormatter().string(from: Date()),
             mailboxEmail: mailboxEmail
         )
-        await scheduleRichMailNotification(for: sample, mailboxEmail: mailboxEmail.isEmpty ? "viplemail.fr" : mailboxEmail)
-        return true
+        return await scheduleRichMailNotification(
+            for: sample,
+            mailboxEmail: mailboxEmail.isEmpty ? "viplemail.fr" : mailboxEmail,
+            skipRemoteAvatar: true
+        )
     }
 
     public func applyAppBadgeCount(_ count: Int) async {
@@ -717,20 +875,21 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
         await VipleMailAPIClient.shared.unregisterDeviceForPush(email: email)
     }
 
-    // MARK: - 4. Génération d'Avatar Riche Rapide (< 2s max en Arrière-Plan)
+    // MARK: - 4. Génération d'Avatar Riche Ultra-Rapide (0 ms Réseau en Arrière-Plan)
 
     private func buildAvatarAttachment(
         senderName: String,
         senderEmail: String,
         avatarUrl: String?,
-        isVip: Bool
+        isVip: Bool,
+        skipRemoteDownload: Bool = false
     ) async -> UNNotificationAttachment? {
         #if canImport(UIKit)
         var renderedImage: UIImage? = nil
 
-        if let rawUrl = avatarUrl, let url = URL(string: rawUrl) {
+        if !skipRemoteDownload, let rawUrl = avatarUrl, let url = URL(string: rawUrl) {
             var avatarReq = URLRequest(url: url)
-            avatarReq.timeoutInterval = 2.0 // Timeout court pour ne jamais bloquer BGAppRefreshTask
+            avatarReq.timeoutInterval = 1.5
             if let (data, resp) = try? await URLSession.shared.data(for: avatarReq),
                let http = resp as? HTTPURLResponse,
                (200...299).contains(http.statusCode),

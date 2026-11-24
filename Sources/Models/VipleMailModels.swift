@@ -586,6 +586,7 @@ public struct VipleMailDiagnosticsPing: Codable, Sendable {
     public let autodiscoverHost: String?
     public let ssoProvider: String
     public let cenelisSsoProvider: String?
+    public let apnsConfigured: Bool?
     public let serverTimeUtc: String
     public let version: String
 }
@@ -650,6 +651,42 @@ public struct VipleMailNotificationPollResponse: Codable, Sendable {
     public let vipNotificationsOnly: Bool
     public let recentUnseen: [VipleMailNotificationItem]
     public let chatUnreadCount: Int?
+    public let apnsServerConfigured: Bool?
+}
+
+public struct VipleMailApnsAdminDetails: Codable, Equatable, Sendable {
+    public let configured: Bool
+    public let teamId: String
+    public let keyId: String
+    public let bundleId: String
+    public let preferSandbox: Bool
+    public let registeredApnsDevices: Int
+}
+
+public struct VipleMailApnsStatusResponse: Codable, Sendable {
+    public let ok: Bool
+    public let configured: Bool
+    public let hasUserDeviceToken: Bool?
+    public let userDeviceCount: Int?
+    public let canConfigure: Bool?
+    public let apns: VipleMailApnsAdminDetails?
+}
+
+public struct VipleMailApnsTestResponse: Codable, Sendable {
+    public let ok: Bool
+    public let scheduled: Bool?
+    public let delaySeconds: Int?
+    public let sentCount: Int?
+    public let apnsConfigured: Bool?
+    public let deviceCount: Int?
+    public let message: String?
+}
+
+public struct VipleMailApnsSaveResponse: Codable, Sendable {
+    public let ok: Bool
+    public let message: String?
+    public let error: String?
+    public let apns: VipleMailApnsAdminDetails?
 }
 
 // MARK: - Modèles de Discussion Instantanée « Chat @viplemail.fr »

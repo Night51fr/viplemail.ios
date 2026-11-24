@@ -1655,10 +1655,11 @@ public final class VipleMailViewModel: ObservableObject {
     }
 
     public func saveMailSettings(displayName: String? = nil, personalMessage: String? = nil) async {
-        guard !currentEmail.isEmpty else { return }
+        let ownerEmail = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
+        guard !ownerEmail.isEmpty, ownerEmail != "__all__" else { return }
         do {
             let res = try await VipleMailAPIClient.shared.postRaw("/settings/save", body: [
-                "email": currentEmail,
+                "email": ownerEmail,
                 "cid": currentCid ?? "",
                 "displayName": displayName ?? currentUser?.displayName ?? "",
                 "personalMessage": personalMessage ?? currentUser?.personalMessage ?? "",
@@ -1675,7 +1676,7 @@ public final class VipleMailViewModel: ObservableObject {
                 "vipNotificationsOnly": settings.vipNotificationsOnly
             ])
             await VipleMailAPIClient.shared.registerDeviceForPush(
-                email: currentEmail,
+                email: ownerEmail,
                 cid: currentCid,
                 apnsToken: VipleMailNotificationManager.shared.apnsDeviceTokenHex,
                 notificationsEnabled: settings.pushNotificationsEnabled,

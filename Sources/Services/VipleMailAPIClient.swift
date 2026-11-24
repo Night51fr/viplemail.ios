@@ -48,6 +48,7 @@ public final class VipleMailAPIClient {
     public var authToken: String? = nil
 
     private let session: URLSession
+    private let backgroundPollSession: URLSession
     private let tlsDelegate: VipleMailTLSSessionDelegate
     private let decoder: JSONDecoder
 
@@ -55,9 +56,16 @@ public final class VipleMailAPIClient {
         let cfg = URLSessionConfiguration.default
         cfg.timeoutIntervalForRequest = 20
         cfg.timeoutIntervalForResource = 35
+
+        let bgCfg = URLSessionConfiguration.default
+        bgCfg.timeoutIntervalForRequest = 6.5
+        bgCfg.timeoutIntervalForResource = 9.0
+        bgCfg.waitsForConnectivity = false
+
         let delegate = VipleMailTLSSessionDelegate()
         self.tlsDelegate = delegate
         self.session = URLSession(configuration: cfg, delegate: delegate, delegateQueue: nil)
+        self.backgroundPollSession = URLSession(configuration: bgCfg, delegate: delegate, delegateQueue: nil)
         self.decoder = JSONDecoder()
     }
 
@@ -100,10 +108,10 @@ public final class VipleMailAPIClient {
 
     private func applyDeviceHeaders(to req: inout URLRequest) async {
         req.setValue("Viple Mail", forHTTPHeaderField: "X-Viple-App-Name")
-        req.setValue("2026.11.14", forHTTPHeaderField: "X-Viple-Client-Version")
+        req.setValue("2026.11.15", forHTTPHeaderField: "X-Viple-Client-Version")
         req.setValue("1.0", forHTTPHeaderField: "X-Cenelis-MailRTE-Version")
         req.setValue(UUID().uuidString.lowercased(), forHTTPHeaderField: "X-Viple-Request-Id")
-        req.setValue("VipleMail-iOS/2026.11.14 (iPhone; iOS 18.0+; mail.viplemail.fr; MailRTE/1.0)", forHTTPHeaderField: "User-Agent")
+        req.setValue("VipleMail-iOS/2026.11.15 (iPhone; iOS 18.0+; mail.viplemail.fr; MailRTE/1.0)", forHTTPHeaderField: "User-Agent")
         let currentToken = authToken ?? ""
         if !currentToken.isEmpty {
             req.setValue("Bearer \(currentToken)", forHTTPHeaderField: "Authorization")
@@ -636,7 +644,8 @@ public final class VipleMailAPIClient {
         email: String,
         cid: String?,
         limit: Int = 15,
-        allMailboxes: Bool = true
+        allMailboxes: Bool = true,
+        fastBackground: Bool = false
     ) async throws -> VipleMailNotificationPollResponse {
         var items: [URLQueryItem] = [
             URLQueryItem(name: "email", value: email),
@@ -646,7 +655,64 @@ public final class VipleMailAPIClient {
         if let cid, !cid.isEmpty {
             items.append(URLQueryItem(name: "cid", value: cid))
         }
+        if fastBackground {
+            var comps = URLComponents(string: "\(primaryBaseURL)/notifications/poll")!
+            comps.queryItems = items
+            guard let url = comps.url else {
+                throw URLError(.badURL)
+            }
+            var req = URLRequest(url: url)
+            req.httpMethod = "GET"
+            req.timeoutInterval = 6.5
+            req.setValue("application/json", forHTTPHeaderField: "Accept")
+            await applyDeviceHeaders(to: &req)
+            let (data, response) = try await backgroundPollSession.data(for: req)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                throw URLError(.badServerResponse)
+            }
+            return try decoder.decode(VipleMailNotificationPollResponse.self, from: data)
+        }
         return try await getJSON("/notifications/poll", queryItems: items)
+    }
+
+    public func fetchApnsStatus(email: String, cid: String?) async throws -> VipleMailApnsStatusResponse {
+        var items: [URLQueryItem] = [URLQueryItem(name: "email", value: email)]
+        if let cid, !cid.isEmpty {
+            items.append(URLQueryItem(name: "cid", value: cid))
+        }
+        return try await getJSON("/notifications/apns-status", queryItems: items)
+    }
+
+    public func triggerServerApnsTest(
+        email: String,
+        cid: String?,
+        delaySeconds: Int = 5
+    ) async throws -> VipleMailApnsTestResponse {
+        try await postJSON("/notifications/test-apns", body: [
+            "email": email,
+            "cid": cid ?? "",
+            "delaySeconds": delaySeconds
+        ])
+    }
+
+    public func saveAdminApnsCredentials(
+        email: String,
+        cid: String?,
+        teamId: String,
+        keyId: String,
+        bundleId: String,
+        privateKeyP8: String,
+        preferSandbox: Bool
+    ) async throws -> VipleMailApnsSaveResponse {
+        try await postJSON("/admin/apns", body: [
+            "email": email,
+            "cid": cid ?? "",
+            "teamId": teamId,
+            "keyId": keyId,
+            "bundleId": bundleId,
+            "privateKeyP8": privateKeyP8,
+            "preferSandbox": preferSandbox
+        ])
     }
 
     public func registerDeviceForPush(
@@ -671,7 +737,7 @@ public final class VipleMailAPIClient {
             "apnsToken": apnsToken ?? "",
             "apnsEnvironment": apnsEnv,
             "platform": "iOS",
-            "appVersion": "2026.11.9",
+            "appVersion": "2026.11.15",
             "notificationsEnabled": notificationsEnabled,
             "vipOnly": vipOnly
         ]

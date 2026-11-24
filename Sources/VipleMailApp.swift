@@ -123,7 +123,7 @@ public struct VipleMailApp: App {
                     case .background:
                         notifManager.enterBackgroundMode()
                     case .inactive:
-                        notifManager.scheduleBackgroundTasks()
+                        notifManager.handleSceneBecameInactive()
                     @unknown default:
                         break
                     }

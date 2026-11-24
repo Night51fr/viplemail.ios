@@ -1,4 +1,8 @@
 import SwiftUI
+import UniformTypeIdentifiers
+#if canImport(UIKit)
+import UIKit
+#endif
 
 // MARK: - Réglages & Compte Viple Live ID « Viple Mail » (Signature, Gestes de Balayage, Répondeur Automatique, Diagnostics & Déconnexion)
 
@@ -13,6 +17,17 @@ public struct MailSettingsView: View {
     @State private var cenelisCustomHandleField: String = ""
     @State private var isEditingCenelisHandle: Bool = false
     @State private var accountPendingDeletion: ExternalMailAccount? = nil
+
+    // Configuration Serveur Push Apple APNs (.p8) pour administrateurs / agents Cenelis
+    @State private var isApnsConfigExpanded: Bool = false
+    @State private var apnsTeamIdField: String = ""
+    @State private var apnsKeyIdField: String = ""
+    @State private var apnsBundleIdField: String = "com.viplenetwork.viplemail"
+    @State private var apnsPrivateKeyP8Field: String = ""
+    @State private var apnsPreferSandboxField: Bool = false
+    @State private var isSavingApnsConfig: Bool = false
+    @State private var isTestingRemoteApns: Bool = false
+    @State private var isImportingP8File: Bool = false
 
     public init() {}
 
@@ -56,12 +71,48 @@ public struct MailSettingsView: View {
         } message: { acc in
             Text("L'adresse \(acc.email) ne sera plus affichée dans Viple Mail. Aucun e-mail ne sera supprimé sur le serveur \(acc.providerName).")
         }
+        .fileImporter(
+            isPresented: $isImportingP8File,
+            allowedContentTypes: [.data, .plainText, .item],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                let accessed = url.startAccessingSecurityScopedResource()
+                defer {
+                    if accessed { url.stopAccessingSecurityScopedResource() }
+                }
+                if let content = try? String(contentsOf: url, encoding: .utf8) {
+                    apnsPrivateKeyP8Field = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let fname = url.deletingPathExtension().lastPathComponent
+                    if fname.uppercased().hasPrefix("AUTHKEY_"), apnsKeyIdField.isEmpty {
+                        let extracted = String(fname.dropFirst("AuthKey_".count)).uppercased()
+                        if extracted.count >= 6 {
+                            apnsKeyIdField = extracted
+                        }
+                    }
+                    vm.showToast("Clé \(url.lastPathComponent) chargée.")
+                } else {
+                    vm.showToast("Impossible de lire le fichier .p8 sélectionné.")
+                }
+            case .failure(let err):
+                vm.showToast(err.localizedDescription)
+            }
+        }
         .onAppear {
             displayNameField = vm.currentUser?.displayName ?? ""
             personalMessageField = vm.currentUser?.personalMessage ?? ""
             cenelisCustomHandleField = vm.suggestedCenelisLocalPart
             Task {
                 await notifManager.refreshAuthorizationStatus()
+                await notifManager.refreshServerApnsStatus()
+                if let details = notifManager.apnsStatusDetails?.apns {
+                    if !details.teamId.isEmpty { apnsTeamIdField = details.teamId }
+                    if !details.keyId.isEmpty { apnsKeyIdField = details.keyId }
+                    if !details.bundleId.isEmpty { apnsBundleIdField = details.bundleId }
+                    apnsPreferSandboxField = details.preferSandbox
+                }
             }
         }
     }
@@ -792,29 +843,269 @@ public struct MailSettingsView: View {
                 Toggle("Pastille du nombre de non-lus sur l'icône", isOn: $notifManager.badgeEnabled)
                     .font(.system(size: 14, weight: .semibold))
 
-                Button {
-                    Task {
-                        let ok = await notifManager.sendTestNotification(mailboxEmail: vm.currentEmail)
-                        if ok {
-                            vm.showToast("Notification de test envoyée !")
-                        } else {
-                            vm.showToast("Veuillez autoriser les notifications dans iOS.")
+                HStack(spacing: 8) {
+                    Button {
+                        Task {
+                            let ok = await notifManager.sendTestNotification(mailboxEmail: vm.currentEmail)
+                            if ok {
+                                vm.showToast("Notification locale envoyée !")
+                            } else {
+                                vm.showToast("Veuillez autoriser les notifications dans iOS.")
+                            }
                         }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "bell.and.waves.left.and.right.fill")
+                            Text("Test immédiat")
+                                .font(.system(size: 13, weight: .bold, design: .rounded))
+                        }
+                        .foregroundStyle(VipleMailPalette.primary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.primary.opacity(0.11)))
                     }
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "bell.and.waves.left.and.right.fill")
-                        Text("Envoyer une notification de test")
-                            .font(.system(size: 13.5, weight: .bold, design: .rounded))
+
+                    Button {
+                        let ownerEmail = vm.primaryHostedEmail.isEmpty ? vm.currentEmail : vm.primaryHostedEmail
+                        guard !ownerEmail.isEmpty else { return }
+                        isTestingRemoteApns = true
+                        Task {
+                            defer { isTestingRemoteApns = false }
+                            do {
+                                let res = try await VipleMailAPIClient.shared.triggerServerApnsTest(
+                                    email: ownerEmail,
+                                    cid: vm.currentCid,
+                                    delaySeconds: 5
+                                )
+                                if res.ok {
+                                    vm.showToast(res.message ?? "Verrouillez votre iPhone : push Apple APNs dans 5 s !")
+                                } else {
+                                    if res.apnsConfigured == false {
+                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                                            isApnsConfigExpanded = true
+                                        }
+                                    }
+                                    vm.showToast(res.message ?? "Push APNs indisponible.")
+                                }
+                            } catch {
+                                vm.showToast(error.localizedDescription)
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            if isTestingRemoteApns {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "lock.iphone")
+                            }
+                            Text("Test écran verrouillé (5 s)")
+                                .font(.system(size: 13, weight: .bold, design: .rounded))
+                                .lineLimit(1)
+                        }
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.primary))
                     }
-                    .foregroundStyle(VipleMailPalette.primary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(VipleMailPalette.primary.opacity(0.11)))
+                    .disabled(isTestingRemoteApns)
+                }
+
+                if vm.isApprovedCenelisAgent || notifManager.apnsStatusDetails?.canConfigure == true {
+                    apnsServerAdminSection
                 }
             }
         }
         .vipleMailCard(cornerRadius: 20, padding: 16)
+    }
+
+    private var apnsServerAdminSection: some View {
+        let configured = notifManager.isServerApnsConfigured
+        let hasDeviceToken = !(notifManager.apnsDeviceTokenHex ?? "").isEmpty
+
+        return VStack(alignment: .leading, spacing: 10) {
+            Divider()
+
+            HStack(spacing: 8) {
+                Image(systemName: configured ? "checkmark.shield.fill" : "exclamationmark.triangle.fill")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(configured ? VipleMailPalette.success : Color.orange)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(configured ? "Serveur Push Apple APNs (.p8) actif" : "Clé Apple Push APNs (.p8) non configurée")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(VipleMailPalette.ink)
+
+                    Text(configured
+                         ? "Réveil distant HTTP/2 actif sur mail.viplemail.fr • Jeton iPhone : \(hasDeviceToken ? "enregistré" : "en attente")"
+                         : "Sans clé Apple .p8 sur mail.viplemail.fr, iOS suspend l'application après ~30 s d'inactivité. Ajoutez votre clé .p8 pour recevoir les notifications même app totalement fermée.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(VipleMailPalette.inkMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer()
+
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                        isApnsConfigExpanded.toggle()
+                    }
+                } label: {
+                    Text(isApnsConfigExpanded ? "Fermer" : (configured ? "Modifier" : "Configurer"))
+                        .font(.system(size: 11.5, weight: .bold, design: .rounded))
+                        .foregroundStyle(configured ? VipleMailPalette.primary : .white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule()
+                                .fill(configured ? VipleMailPalette.primary.opacity(0.12) : Color.orange)
+                        )
+                }
+            }
+
+            if isApnsConfigExpanded {
+                VStack(alignment: .leading, spacing: 9) {
+                    HStack(spacing: 8) {
+                        TextField(
+                            "Team ID Apple (ex: ABCD123456)",
+                            text: $apnsTeamIdField,
+                            prompt: VipleMailPalette.prompt("Team ID Apple", scheme: colorScheme)
+                        )
+                        .textInputAutocapitalization(.characters)
+                        .autocorrectionDisabled()
+                        .vipleMailTextInput()
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(VipleMailPalette.resolvedSurface(for: colorScheme)))
+
+                        TextField(
+                            "Key ID .p8 (ex: 9XYZ876543)",
+                            text: $apnsKeyIdField,
+                            prompt: VipleMailPalette.prompt("Key ID (.p8)", scheme: colorScheme)
+                        )
+                        .textInputAutocapitalization(.characters)
+                        .autocorrectionDisabled()
+                        .vipleMailTextInput()
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(VipleMailPalette.resolvedSurface(for: colorScheme)))
+                    }
+
+                    TextField(
+                        "Bundle ID (com.viplenetwork.viplemail)",
+                        text: $apnsBundleIdField,
+                        prompt: VipleMailPalette.prompt("com.viplenetwork.viplemail", scheme: colorScheme)
+                    )
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .vipleMailTextInput()
+                    .font(.system(size: 12.5, weight: .medium, design: .monospaced))
+                    .padding(10)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(VipleMailPalette.resolvedSurface(for: colorScheme)))
+
+                    HStack(spacing: 8) {
+                        Button {
+                            isImportingP8File = true
+                        } label: {
+                            Label("Importer AuthKey.p8", systemImage: "doc.badge.plus")
+                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                                .foregroundStyle(VipleMailPalette.primary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                                .background(RoundedRectangle(cornerRadius: 9).fill(VipleMailPalette.primary.opacity(0.12)))
+                        }
+
+                        #if canImport(UIKit)
+                        Button {
+                            if let clip = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines),
+                               !clip.isEmpty {
+                                apnsPrivateKeyP8Field = clip
+                                vm.showToast("Clé .p8 collée depuis le presse-papiers.")
+                            } else {
+                                vm.showToast("Presse-papiers vide.")
+                            }
+                        } label: {
+                            Label("Coller .p8", systemImage: "doc.on.clipboard")
+                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                                .foregroundStyle(VipleMailPalette.inkSecondary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                                .background(RoundedRectangle(cornerRadius: 9).fill(VipleMailPalette.resolvedSurface(for: colorScheme)))
+                        }
+                        #endif
+                    }
+
+                    VipleMailMultiLineEditor(
+                        text: $apnsPrivateKeyP8Field,
+                        placeholder: configured
+                            ? "Laissez vide pour conserver la clé .p8 actuelle, ou collez -----BEGIN PRIVATE KEY----- …"
+                            : "-----BEGIN PRIVATE KEY-----\nCollez ici le contenu de votre fichier Apple AuthKey_XXXXXX.p8\n-----END PRIVATE KEY-----",
+                        minHeight: 84,
+                        font: .monospacedSystemFont(ofSize: 11.5, weight: .regular)
+                    )
+                    .padding(6)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(VipleMailPalette.resolvedSurface(for: colorScheme)))
+
+                    Toggle("Préférer passerelle Sandbox Xcode (développement)", isOn: $apnsPreferSandboxField)
+                        .font(.system(size: 12.5, weight: .medium))
+
+                    Button {
+                        let ownerEmail = vm.primaryHostedEmail.isEmpty ? vm.currentEmail : vm.primaryHostedEmail
+                        guard !ownerEmail.isEmpty else { return }
+                        isSavingApnsConfig = true
+                        Task {
+                            defer { isSavingApnsConfig = false }
+                            do {
+                                let res = try await VipleMailAPIClient.shared.saveAdminApnsCredentials(
+                                    email: ownerEmail,
+                                    cid: vm.currentCid,
+                                    teamId: apnsTeamIdField,
+                                    keyId: apnsKeyIdField,
+                                    bundleId: apnsBundleIdField,
+                                    privateKeyP8: apnsPrivateKeyP8Field,
+                                    preferSandbox: apnsPreferSandboxField
+                                )
+                                if res.ok {
+                                    apnsPrivateKeyP8Field = ""
+                                    await notifManager.refreshServerApnsStatus()
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                                        isApnsConfigExpanded = false
+                                    }
+                                    vm.showToast(res.message ?? "Clé APNs .p8 activée sur mail.viplemail.fr !")
+                                } else {
+                                    vm.showToast(res.error ?? "Impossible d'enregistrer la clé APNs.")
+                                }
+                            } catch {
+                                vm.showToast(error.localizedDescription)
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            if isSavingApnsConfig {
+                                ProgressView()
+                                    .tint(.white)
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "bolt.shield.fill")
+                            }
+                            Text("Enregistrer & Activer Push APNs sur le serveur")
+                                .font(.system(size: 13, weight: .bold, design: .rounded))
+                        }
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 11)
+                        .background(RoundedRectangle(cornerRadius: 11).fill(VipleMailPalette.heroGradient))
+                    }
+                    .disabled(isSavingApnsConfig || apnsTeamIdField.trimmingCharacters(in: .whitespacesAndNewlines).count < 6 || apnsKeyIdField.trimmingCharacters(in: .whitespacesAndNewlines).count < 6)
+                }
+                .padding(12)
+                .background(RoundedRectangle(cornerRadius: 14).fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme)))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(VipleMailPalette.border, lineWidth: 1)
+                )
+            }
+        }
     }
 
     // MARK: - Serveurs Officiels viplemail.fr (IMAP / SMTP / Autodiscover)
