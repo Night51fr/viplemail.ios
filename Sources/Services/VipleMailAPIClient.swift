@@ -108,10 +108,10 @@ public final class VipleMailAPIClient {
 
     private func applyDeviceHeaders(to req: inout URLRequest) async {
         req.setValue("Viple Mail", forHTTPHeaderField: "X-Viple-App-Name")
-        req.setValue("2026.11.15", forHTTPHeaderField: "X-Viple-Client-Version")
+        req.setValue("2026.11.16", forHTTPHeaderField: "X-Viple-Client-Version")
         req.setValue("1.0", forHTTPHeaderField: "X-Cenelis-MailRTE-Version")
         req.setValue(UUID().uuidString.lowercased(), forHTTPHeaderField: "X-Viple-Request-Id")
-        req.setValue("VipleMail-iOS/2026.11.15 (iPhone; iOS 18.0+; mail.viplemail.fr; MailRTE/1.0)", forHTTPHeaderField: "User-Agent")
+        req.setValue("VipleMail-iOS/2026.11.16 (iPhone; iOS 18.0+; mail.viplemail.fr; MailRTE/1.0)", forHTTPHeaderField: "User-Agent")
         let currentToken = authToken ?? ""
         if !currentToken.isEmpty {
             req.setValue("Bearer \(currentToken)", forHTTPHeaderField: "Authorization")
@@ -715,6 +715,29 @@ public final class VipleMailAPIClient {
         ])
     }
 
+    public func fetchMailRtePinInfo(email: String, cid: String?) async throws -> VipleMailPinInfoResponse {
+        var items: [URLQueryItem] = [URLQueryItem(name: "email", value: email)]
+        if let cid, !cid.isEmpty {
+            items.append(URLQueryItem(name: "cid", value: cid))
+        }
+        return try await getJSON("/mailrte/pin-info", queryItems: items)
+    }
+
+    public func unlockPinProtectedMail(
+        mailboxEmail: String,
+        cid: String?,
+        messageId: String,
+        pin: String
+    ) async throws -> VipleMailPinUnlockResponse {
+        try await postJSON("/mailrte/unlock-pin", body: [
+            "email": mailboxEmail,
+            "mailboxEmail": mailboxEmail,
+            "cid": cid ?? "",
+            "messageId": messageId,
+            "pin": pin
+        ])
+    }
+
     public func registerDeviceForPush(
         email: String,
         cid: String?,
@@ -737,7 +760,7 @@ public final class VipleMailAPIClient {
             "apnsToken": apnsToken ?? "",
             "apnsEnvironment": apnsEnv,
             "platform": "iOS",
-            "appVersion": "2026.11.15",
+            "appVersion": "2026.11.16",
             "notificationsEnabled": notificationsEnabled,
             "vipOnly": vipOnly
         ]

@@ -295,6 +295,8 @@ public struct VipleMailMessage: Codable, Identifiable, Equatable, Hashable, Send
     public let mailboxEmail: String?
     public let isExternalMailbox: Bool?
     public let externalProviderName: String?
+    public let requiresCenelisPin: Bool?
+    public let mailRteId: String?
 
     public func effectiveMailboxEmail(fallback: String) -> String {
         if let mbx = mailboxEmail?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
@@ -608,6 +610,7 @@ public struct VipleMailNotificationItem: Codable, Identifiable, Equatable, Senda
     public let isChatMessage: Bool?
     public let chatSessionId: String?
     public let mailboxEmail: String?
+    public let requiresCenelisPin: Bool?
 
     public init(
         id: String,
@@ -623,7 +626,8 @@ public struct VipleMailNotificationItem: Codable, Identifiable, Equatable, Senda
         receivedAt: String,
         isChatMessage: Bool? = false,
         chatSessionId: String? = nil,
-        mailboxEmail: String? = nil
+        mailboxEmail: String? = nil,
+        requiresCenelisPin: Bool? = false
     ) {
         self.id = id
         self.threadId = threadId
@@ -639,6 +643,7 @@ public struct VipleMailNotificationItem: Codable, Identifiable, Equatable, Senda
         self.isChatMessage = isChatMessage
         self.chatSessionId = chatSessionId
         self.mailboxEmail = mailboxEmail
+        self.requiresCenelisPin = requiresCenelisPin
     }
 }
 
@@ -687,6 +692,24 @@ public struct VipleMailApnsSaveResponse: Codable, Sendable {
     public let message: String?
     public let error: String?
     public let apns: VipleMailApnsAdminDetails?
+}
+
+public struct VipleMailPinInfoResponse: Codable, Sendable {
+    public let ok: Bool
+    public let isAgent: Bool?
+    public let hasPin: Bool?
+    public let pinLength: Int?
+    public let lockedUntilUtc: String?
+    public let agentEmail: String?
+    public let error: String?
+}
+
+public struct VipleMailPinUnlockResponse: Codable, Sendable {
+    public let ok: Bool
+    public let needsSetup: Bool?
+    public let locked: Bool?
+    public let error: String?
+    public let message: VipleMailMessage?
 }
 
 // MARK: - Modèles de Discussion Instantanée « Chat @viplemail.fr »

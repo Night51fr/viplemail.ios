@@ -353,3 +353,309 @@ public struct SecureMailReaderView: View {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
+
+// MARK: - Portail Interactif Code PIN Cenelis Connect intégré à la Vue Sécurisée Cenelis MailRTE
+
+@MainActor
+public struct MailRteCenelisPinGateView: View {
+    public let message: VipleMailMessage
+    public let mailboxEmail: String
+    public let cid: String?
+    public let onUnlocked: (VipleMailMessage) -> Void
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    @State private var expectedPinLength: Int = 6
+    @State private var enteredDigits: String = ""
+    @State private var isCheckingInfo: Bool = true
+    @State private var isVerifyingPin: Bool = false
+    @State private var errorMessage: String? = nil
+    @State private var shakeOffset: CGFloat = 0
+    @State private var pulseShield: Bool = false
+
+    public init(
+        message: VipleMailMessage,
+        mailboxEmail: String,
+        cid: String?,
+        onUnlocked: @escaping (VipleMailMessage) -> Void
+    ) {
+        self.message = message
+        self.mailboxEmail = mailboxEmail
+        self.cid = cid
+        self.onUnlocked = onUnlocked
+    }
+
+    public var body: some View {
+        VStack(spacing: 18) {
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.31, green: 0.27, blue: 0.90).opacity(0.22),
+                                Color(red: 0.01, green: 0.52, blue: 0.78).opacity(0.18)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 78, height: 78)
+                    .scaleEffect(pulseShield ? 1.09 : 0.96)
+                    .animation(.easeInOut(duration: 1.9).repeatForever(autoreverses: true), value: pulseShield)
+
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.31, green: 0.27, blue: 0.90),
+                                Color(red: 0.01, green: 0.52, blue: 0.78)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 56, height: 56)
+                    .shadow(color: Color(red: 0.31, green: 0.27, blue: 0.90).opacity(0.35), radius: 12, y: 5)
+
+                Image(systemName: "lock.shield.fill")
+                    .font(.system(size: 26, weight: .bold))
+                    .foregroundStyle(.white)
+            }
+            .padding(.top, 6)
+
+            VStack(spacing: 6) {
+                Text("CENELIS MAILRTE • DIFFUSION INTERNE")
+                    .font(.system(size: 10.5, weight: .black, design: .rounded))
+                    .tracking(0.8)
+                    .foregroundStyle(Color(red: 0.38, green: 0.35, blue: 0.96))
+
+                Text("Code PIN Cenelis Connect requis")
+                    .font(.system(size: 19, weight: .heavy, design: .rounded))
+                    .foregroundStyle(VipleMailPalette.ink)
+                    .multilineTextAlignment(.center)
+
+                Text("Ce courrier est réservé aux agents habilités du Groupe Cenelis. Saisissez votre code PIN à \(expectedPinLength) chiffres pour déchiffrer et afficher la vue MailRTE.")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(VipleMailPalette.inkSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 12)
+            }
+
+            // Pastilles du code PIN
+            HStack(spacing: 12) {
+                ForEach(0..<expectedPinLength, id: \.self) { idx in
+                    let isFilled = idx < enteredDigits.count
+                    Circle()
+                        .fill(isFilled ? VipleMailPalette.primary : VipleMailPalette.resolvedSurface(for: colorScheme))
+                        .frame(width: 16, height: 16)
+                        .overlay(
+                            Circle()
+                                .stroke(isFilled ? VipleMailPalette.primary : VipleMailPalette.borderStrong, lineWidth: 1.6)
+                        )
+                        .scaleEffect(isFilled ? 1.12 : 1.0)
+                        .animation(.spring(response: 0.22, dampingFraction: 0.7), value: enteredDigits.count)
+                }
+            }
+            .offset(x: shakeOffset)
+            .padding(.vertical, 4)
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                    .foregroundStyle(VipleMailPalette.danger)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 12)
+            }
+
+            // Sélecteur 4 / 6 chiffres rapide si l'agent utilise l'autre longueur
+            HStack(spacing: 8) {
+                ForEach([4, 6], id: \.self) { len in
+                    Button {
+                        expectedPinLength = len
+                        enteredDigits = String(enteredDigits.prefix(len))
+                        errorMessage = nil
+                    } label: {
+                        Text("PIN \(len) chiffres")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundStyle(expectedPinLength == len ? .white : VipleMailPalette.inkSecondary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(
+                                Capsule()
+                                    .fill(expectedPinLength == len ? VipleMailPalette.primary : VipleMailPalette.resolvedSurface(for: colorScheme))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            // Pavé numérique tactile natif Cenelis Connect
+            VStack(spacing: 10) {
+                ForEach([[1, 2, 3], [4, 5, 6], [7, 8, 9]], id: \.self) { row in
+                    HStack(spacing: 12) {
+                        ForEach(row, id: \.self) { digit in
+                            pinDigitButton("\(digit)") {
+                                appendDigit("\(digit)")
+                            }
+                        }
+                    }
+                }
+
+                HStack(spacing: 12) {
+                    Button {
+                        enteredDigits = ""
+                        errorMessage = nil
+                    } label: {
+                        Text("Effacer")
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundStyle(VipleMailPalette.inkMuted)
+                            .frame(width: 76, height: 50)
+                            .background(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(VipleMailPalette.resolvedSurface(for: colorScheme))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isVerifyingPin || enteredDigits.isEmpty)
+
+                    pinDigitButton("0") {
+                        appendDigit("0")
+                    }
+
+                    Button {
+                        if !enteredDigits.isEmpty {
+                            enteredDigits.removeLast()
+                        }
+                    } label: {
+                        Image(systemName: "delete.left.fill")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(VipleMailPalette.inkSecondary)
+                            .frame(width: 76, height: 50)
+                            .background(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(VipleMailPalette.resolvedSurface(for: colorScheme))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isVerifyingPin || enteredDigits.isEmpty)
+                }
+            }
+            .padding(.top, 2)
+
+            if isVerifyingPin {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Vérification Cenelis Connect & déchiffrement MailRTE…")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(VipleMailPalette.inkSecondary)
+                }
+                .padding(.top, 4)
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .stroke(Color(red: 0.31, green: 0.27, blue: 0.90).opacity(0.32), lineWidth: 1.2)
+                )
+        )
+        .task {
+            pulseShield = true
+            await loadAgentPinConfiguration()
+        }
+    }
+
+    private func pinDigitButton(_ label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 21, weight: .bold, design: .rounded))
+                .foregroundStyle(VipleMailPalette.ink)
+                .frame(width: 76, height: 50)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(VipleMailPalette.resolvedSurface(for: colorScheme))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(VipleMailPalette.border, lineWidth: 1)
+                        )
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(isVerifyingPin)
+    }
+
+    private func appendDigit(_ digit: String) {
+        guard !isVerifyingPin, enteredDigits.count < expectedPinLength else { return }
+        #if canImport(UIKit)
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        #endif
+        errorMessage = nil
+        enteredDigits.append(digit)
+        if enteredDigits.count == expectedPinLength {
+            let pinToVerify = enteredDigits
+            Task {
+                await submitPin(pinToVerify)
+            }
+        }
+    }
+
+    private func loadAgentPinConfiguration() async {
+        defer { isCheckingInfo = false }
+        guard !mailboxEmail.isEmpty else { return }
+        if let info = try? await VipleMailAPIClient.shared.fetchMailRtePinInfo(email: mailboxEmail, cid: cid) {
+            if let len = info.pinLength, (len == 4 || len == 6) {
+                expectedPinLength = len
+            }
+            if info.isAgent == false {
+                errorMessage = info.error ?? "Accès réservé aux Agents Cenelis."
+            }
+        }
+    }
+
+    private func submitPin(_ pin: String) async {
+        isVerifyingPin = true
+        defer { isVerifyingPin = false }
+
+        let targetMbx = message.effectiveMailboxEmail(fallback: mailboxEmail)
+        do {
+            let res = try await VipleMailAPIClient.shared.unlockPinProtectedMail(
+                mailboxEmail: targetMbx,
+                cid: cid,
+                messageId: message.id,
+                pin: pin
+            )
+            if res.ok, let unlocked = res.message {
+                #if canImport(UIKit)
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                #endif
+                enteredDigits = ""
+                onUnlocked(unlocked)
+            } else {
+                triggerErrorShake(res.error ?? "Code PIN Cenelis Connect incorrect.")
+            }
+        } catch {
+            triggerErrorShake(error.localizedDescription)
+        }
+    }
+
+    private func triggerErrorShake(_ msg: String) {
+        #if canImport(UIKit)
+        UINotificationFeedbackGenerator().notificationOccurred(.error)
+        #endif
+        errorMessage = msg
+        enteredDigits = ""
+        withAnimation(.default) { shakeOffset = -10 }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 70_000_000)
+            withAnimation(.default) { shakeOffset = 10 }
+            try? await Task.sleep(nanoseconds: 70_000_000)
+            withAnimation(.default) { shakeOffset = -6 }
+            try? await Task.sleep(nanoseconds: 70_000_000)
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.6)) { shakeOffset = 0 }
+        }
+    }
+}

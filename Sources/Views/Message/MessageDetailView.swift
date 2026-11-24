@@ -101,10 +101,12 @@ private struct VipleMailHTMLWebView: UIViewRepresentable {
             """
         }
 
+        let isNativeCenelisRichMail = htmlBody.contains("data-cenelis-rich-mail")
         let runtimeScript: String = """
         <script>
         (function() {
           var IS_DARK = \(renderDark ? "true" : "false");
+          var IS_NATIVE_CENELIS_RICH = \(isNativeCenelisRichMail ? "true" : "false");
           var ROOT_DARK_BG = { r: 16, g: 23, b: 38, a: 1 }; // #101726
 
           function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
@@ -435,7 +437,10 @@ private struct VipleMailHTMLWebView: UIViewRepresentable {
           }
 
           function runAll() {
-            try { adaptEmailForDarkMode(); } catch (e) {}
+            document.documentElement.setAttribute('data-viple-theme', IS_DARK ? 'dark' : 'light');
+            if (!IS_NATIVE_CENELIS_RICH) {
+              try { adaptEmailForDarkMode(); } catch (e) {}
+            }
             try { bindImageLoadListeners(); } catch (e) {}
             try { fitWideTablesAndReportHeight(); } catch (e) {}
           }
@@ -452,13 +457,14 @@ private struct VipleMailHTMLWebView: UIViewRepresentable {
           setTimeout(fitWideTablesAndReportHeight, 140);
           setTimeout(fitWideTablesAndReportHeight, 500);
           setTimeout(fitWideTablesAndReportHeight, 1200);
+          setTimeout(fitWideTablesAndReportHeight, 2400);
         })();
         </script>
         """
 
         let wrapped = """
         <!doctype html>
-        <html>
+        <html data-viple-theme="\(renderDark ? "dark" : "light")">
         <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -524,6 +530,7 @@ private struct VipleMailHTMLWebView: UIViewRepresentable {
 public struct MessageDetailView: View {
     @EnvironmentObject private var vm: VipleMailViewModel
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.scenePhase) private var scenePhase
     public let message: VipleMailMessage
 
     @State private var showFullHeaders: Bool = false
@@ -531,6 +538,7 @@ public struct MessageDetailView: View {
     @State private var isShowingMoveFolderSheet: Bool = false
     @State private var forceOriginalLightEmail: Bool = false
     @State private var htmlContentHeight: CGFloat = 220
+    @State private var pinUnlockedMessage: VipleMailMessage? = nil
 
     public init(message: VipleMailMessage) {
         self.message = message
@@ -541,7 +549,10 @@ public struct MessageDetailView: View {
     }
 
     private var currentMessage: VipleMailMessage {
-        vm.messages.first(where: { $0.id == message.id }) ?? message
+        if let unlocked = pinUnlockedMessage, unlocked.id == message.id {
+            return unlocked
+        }
+        return vm.messages.first(where: { $0.id == message.id }) ?? message
     }
 
     private var previousEmailsInThread: [VipleMailMessage] {
@@ -592,6 +603,14 @@ public struct MessageDetailView: View {
         }
         .background(VipleMailPalette.surface.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
+        .onDisappear {
+            pinUnlockedMessage = nil
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase != .active {
+                pinUnlockedMessage = nil
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button {
@@ -1034,6 +1053,18 @@ public struct MessageDetailView: View {
 
     private func classicEmailBodySection(_ msg: VipleMailMessage) -> some View {
         VStack(alignment: .leading, spacing: 10) {
+            if msg.requiresCenelisPin == true && msg.bodyHtml.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                MailRteCenelisPinGateView(
+                    message: msg,
+                    mailboxEmail: vm.primaryHostedEmail.isEmpty ? vm.currentEmail : vm.primaryHostedEmail,
+                    cid: vm.currentCid
+                ) { unlocked in
+                    withAnimation(.spring(response: 0.38, dampingFraction: 0.84)) {
+                        htmlContentHeight = 260
+                        pinUnlockedMessage = unlocked
+                    }
+                }
+            } else {
             #if canImport(WebKit) && canImport(UIKit)
             if hasRichHTML(msg.bodyHtml) {
                 if colorScheme == .dark {
@@ -1111,6 +1142,7 @@ public struct MessageDetailView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
             #endif
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 16)
