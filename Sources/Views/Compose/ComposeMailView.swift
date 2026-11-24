@@ -20,6 +20,8 @@ public struct ComposeMailView: View {
     @State private var bodyField: String = ""
     @State private var priority: String = "Normal"
     @State private var includeSignature: Bool = true
+    @State private var disableMailRteForThisMail: Bool = false
+    @State private var isShowingMailRteHelp: Bool = false
     @State private var attachments: [VipleMailAttachment] = []
     @State private var draftId: String? = nil
     @State private var threadId: String? = nil
@@ -673,8 +675,94 @@ public struct ComposeMailView: View {
                 .padding(.vertical, 13)
 
                 Divider()
+
+                if vm.isInternalMailbox(effectiveSenderEmail) {
+                    mailRteOptionRow
+                    Divider()
+                }
             }
         }
+    }
+
+    private var mailRteOptionRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 9) {
+                Image(systemName: disableMailRteForThisMail ? "exclamationmark.shield.fill" : "lock.shield.fill")
+                    .font(.system(size: 14.5, weight: .semibold))
+                    .foregroundStyle(disableMailRteForThisMail ? VipleMailPalette.warning : VipleMailPalette.primary)
+
+                Text("Désactiver MailRTE pour ce mail")
+                    .font(.system(size: 13.5, weight: .medium))
+                    .foregroundStyle(VipleMailPalette.ink)
+                    .lineLimit(1)
+
+                Button {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
+                        isShowingMailRteHelp.toggle()
+                    }
+                } label: {
+                    Image(systemName: isShowingMailRteHelp ? "questionmark.circle.fill" : "questionmark.circle")
+                        .font(.system(size: 15.5, weight: .semibold))
+                        .foregroundStyle(VipleMailPalette.primary)
+                        .padding(.vertical, 2)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Aide Cenelis MailRTE")
+
+                Spacer(minLength: 4)
+
+                Toggle("Désactiver MailRTE pour ce mail", isOn: $disableMailRteForThisMail)
+                    .labelsHidden()
+                    .scaleEffect(0.88)
+                    .tint(VipleMailPalette.warning)
+            }
+
+            if disableMailRteForThisMail && !isShowingMailRteHelp {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(VipleMailPalette.warning)
+                    Text("Cenelis MailRTE est désactivé pour cet envoi uniquement.")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(VipleMailPalette.warning)
+                }
+            }
+
+            if isShowingMailRteHelp {
+                HStack(alignment: .top, spacing: 9) {
+                    Image(systemName: "checkmark.shield.fill")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(VipleMailPalette.primary)
+                        .padding(.top, 1)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Il est recommandé de ne pas désactiver Cenelis MailRTE")
+                            .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                            .foregroundStyle(VipleMailPalette.ink)
+
+                        Text("Par défaut, Cenelis MailRTE est toujours activé : il chiffre et protège toutes les données contenues dans ce mail (objet, corps du message, métadonnées associées et pièces jointes).")
+                            .font(.system(size: 12))
+                            .foregroundStyle(VipleMailPalette.inkSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer(minLength: 0)
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(VipleMailPalette.primary.opacity(0.08))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .stroke(VipleMailPalette.primary.opacity(0.24), lineWidth: 1)
+                )
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 9)
+        .background(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme).opacity(0.45))
     }
 
     private var chatMailInlineToggle: some View {
@@ -1245,6 +1333,8 @@ public struct ComposeMailView: View {
     }
 
     private func populateInitialFields() {
+        disableMailRteForThisMail = false
+        isShowingMailRteHelp = false
         let fallbackSender = vm.defaultSendingMailbox
         switch mode {
         case .newMail(let to, let subject, let forceMail, let preferredFromMailbox):
@@ -1355,7 +1445,8 @@ public struct ComposeMailView: View {
                 isDraft: false,
                 attachments: attachments,
                 deliveryMode: "mail",
-                fromMailbox: effectiveSenderEmail
+                fromMailbox: effectiveSenderEmail,
+                disableMailRte: disableMailRteForThisMail
             )
             if ok {
                 dismiss()
@@ -1379,7 +1470,8 @@ public struct ComposeMailView: View {
                 isDraft: true,
                 attachments: attachments,
                 deliveryMode: "mail",
-                fromMailbox: effectiveSenderEmail
+                fromMailbox: effectiveSenderEmail,
+                disableMailRte: disableMailRteForThisMail
             )
             dismiss()
         }

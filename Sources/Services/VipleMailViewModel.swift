@@ -1287,7 +1287,8 @@ public final class VipleMailViewModel: ObservableObject {
         isDraft: Bool,
         attachments: [VipleMailAttachment],
         deliveryMode: String = "mail",
-        fromMailbox: String? = nil
+        fromMailbox: String? = nil,
+        disableMailRte: Bool = false
     ) async -> Bool {
         let senderMailbox = (fromMailbox?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()).flatMap { $0.isEmpty ? nil : $0 } ?? defaultSendingMailbox
         guard !senderMailbox.isEmpty else { return false }
@@ -1314,6 +1315,7 @@ public final class VipleMailViewModel: ObservableObject {
             "bodyText": bodyText,
             "priority": priority,
             "deliveryMode": deliveryMode,
+            "disableMailRte": disableMailRte,
             "isDraft": isDraft,
             "attachments": encodedAttachments
         ]
