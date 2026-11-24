@@ -6,6 +6,24 @@ import WebKit
 // MARK: - Lecture de Courrier Classique « Viple Mail » (Style Apple Mail / Client Mail Traditionnel — Zéro Bulle de Chat)
 
 #if canImport(WebKit) && canImport(UIKit)
+@MainActor
+private final class WeakHeightMessageHandler: NSObject, WKScriptMessageHandler {
+    weak var coordinator: VipleMailHTMLWebView.Coordinator?
+
+    init(_ coordinator: VipleMailHTMLWebView.Coordinator) {
+        self.coordinator = coordinator
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        if let num = message.body as? NSNumber {
+            let h = CGFloat(truncating: num)
+            if h > 0 {
+                coordinator?.applyMeasuredHeight(h)
+            }
+        }
+    }
+}
+
 private struct VipleMailHTMLWebView: UIViewRepresentable {
     let htmlBody: String
     let renderDark: Bool
@@ -17,11 +35,14 @@ private struct VipleMailHTMLWebView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> WKWebView {
         let cfg = WKWebViewConfiguration()
+        cfg.userContentController.add(WeakHeightMessageHandler(context.coordinator), name: "vipleMailHeight")
         let wv = WKWebView(frame: .zero, configuration: cfg)
         wv.isOpaque = false
         wv.backgroundColor = .clear
         wv.scrollView.backgroundColor = .clear
         wv.scrollView.isScrollEnabled = false
+        wv.scrollView.bounces = false
+        wv.scrollView.showsHorizontalScrollIndicator = false
         wv.navigationDelegate = context.coordinator
         return wv
     }
@@ -36,16 +57,18 @@ private struct VipleMailHTMLWebView: UIViewRepresentable {
             baseCss = """
             :root { color-scheme: dark light; }
             html, body {
-              margin: 0; padding: 0;
+              margin: 0 !important; padding: 0 !important;
+              width: 100%;
               font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
               font-size: 15.5px; line-height: 1.58;
               color: #F1F6FD;
               word-wrap: break-word; overflow-wrap: anywhere;
               background: transparent !important;
+              -webkit-text-size-adjust: 100%;
             }
             img { max-width: 100% !important; height: auto !important; border-radius: 6px; }
-            table { max-width: 100% !important; border-color: rgba(148, 179, 226, 0.20); }
-            hr { border: none; border-top: 1px solid rgba(148, 179, 226, 0.18); }
+            table { border-color: rgba(148, 179, 226, 0.18); border-collapse: collapse; }
+            hr { border: none !important; border-top: 1px solid rgba(148, 179, 226, 0.20) !important; }
             pre, code {
               background-color: #192338 !important;
               color: #E2EEFF !important;
@@ -54,102 +77,396 @@ private struct VipleMailHTMLWebView: UIViewRepresentable {
             }
             blockquote {
               margin: 12px 0; padding-left: 12px;
-              border-left: 2.5px solid #3B5278;
-              color: #AABAd1;
+              border-left: 2.5px solid #3B5278 !important;
+              color: #B8C6DC;
             }
-            a { color: #47A3FF; }
+            a { color: #58A6FF; }
             """
         } else {
             baseCss = """
             :root { color-scheme: light; }
             html, body {
-              margin: 0; padding: 0;
+              margin: 0 !important; padding: 0 !important;
+              width: 100%;
               font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
               font-size: 15.5px; line-height: 1.58;
               color: #0f172a;
               word-wrap: break-word; overflow-wrap: anywhere;
               background: transparent;
+              -webkit-text-size-adjust: 100%;
             }
             img { max-width: 100% !important; height: auto !important; border-radius: 6px; }
-            table { max-width: 100% !important; }
             blockquote { margin: 12px 0; padding-left: 12px; border-left: 2.5px solid #cbd5e1; color: #475569; }
             a { color: #0078D4; }
             """
         }
 
-        let darkNormalizerScript: String = renderDark ? """
+        let runtimeScript: String = """
         <script>
         (function() {
-          function parseRgb(str) {
+          var IS_DARK = \(renderDark ? "true" : "false");
+          var ROOT_DARK_BG = { r: 16, g: 23, b: 38, a: 1 }; // #101726
+
+          function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+
+          function parseColor(str) {
             if (!str) return null;
-            var m = str.match(/rgba?\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)(?:\\s*,\\s*([\\d.]+))?\\s*\\)/i);
-            if (!m) return null;
-            return { r: +m[1], g: +m[2], b: +m[3], a: m[4] !== undefined ? +m[4] : 1 };
+            var s = str.trim().toLowerCase();
+            if (s === 'transparent' || s === 'none') return { r: 0, g: 0, b: 0, a: 0 };
+            var m = s.match(/rgba?\\(\\s*([\\d.]+)\\s*,\\s*([\\d.]+)\\s*,\\s*([\\d.]+)(?:\\s*[,/]\\s*([\\d.]+))?\\s*\\)/);
+            if (m) {
+              return {
+                r: clamp(Math.round(+m[1]), 0, 255),
+                g: clamp(Math.round(+m[2]), 0, 255),
+                b: clamp(Math.round(+m[3]), 0, 255),
+                a: m[4] !== undefined ? clamp(+m[4], 0, 1) : 1
+              };
+            }
+            var hx = s.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/);
+            if (hx) {
+              var h = hx[1];
+              if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+              var n = parseInt(h, 16);
+              return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255, a: 1 };
+            }
+            return null;
           }
-          function lum(c) {
-            return (0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b) / 255;
+
+          function srgbChannel(v) {
+            var x = v / 255;
+            return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
           }
-          function sat(c) {
-            var mx = Math.max(c.r, c.g, c.b), mn = Math.min(c.r, c.g, c.b);
-            return mx === 0 ? 0 : (mx - mn) / mx;
+
+          // Luminance relative officielle WCAG 2.1 (0.0 noir .. 1.0 blanc)
+          function wcagLum(c) {
+            return 0.2126 * srgbChannel(c.r) + 0.7152 * srgbChannel(c.g) + 0.0722 * srgbChannel(c.b);
           }
-          function hasAuthorDarkMedia() {
-            var styles = document.querySelectorAll('style');
-            for (var i = 0; i < styles.length; i++) {
-              if (/prefers-color-scheme\\s*:\\s*dark/i.test(styles[i].textContent || '')) return true;
+
+          function contrastRatio(l1, l2) {
+            var hi = Math.max(l1, l2), lo = Math.min(l1, l2);
+            return (hi + 0.05) / (lo + 0.05);
+          }
+
+          function rgbToHsl(c) {
+            var r = c.r / 255, g = c.g / 255, b = c.b / 255;
+            var max = Math.max(r, g, b), min = Math.min(r, g, b);
+            var h = 0, s = 0, l = (max + min) / 2;
+            if (max !== min) {
+              var d = max - min;
+              s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+              switch (max) {
+                case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+                case g: h = (b - r) / d + 2; break;
+                case b: h = (r - g) / d + 4; break;
+              }
+              h /= 6;
+            }
+            return { h: h * 360, s: s, l: l };
+          }
+
+          function hslToRgb(h, s, l) {
+            h = ((h % 360) + 360) % 360 / 360;
+            s = clamp(s, 0, 1); l = clamp(l, 0, 1);
+            if (s === 0) {
+              var v = Math.round(l * 255);
+              return { r: v, g: v, b: v, a: 1 };
+            }
+            function hue2rgb(p, q, t) {
+              if (t < 0) t += 1;
+              if (t > 1) t -= 1;
+              if (t < 1/6) return p + (q - p) * 6 * t;
+              if (t < 1/2) return q;
+              if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+              return p;
+            }
+            var q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+            var p = 2 * l - q;
+            return {
+              r: Math.round(hue2rgb(p, q, h + 1/3) * 255),
+              g: Math.round(hue2rgb(p, q, h) * 255),
+              b: Math.round(hue2rgb(p, q, h - 1/3) * 255),
+              a: 1
+            };
+          }
+
+          function toCssRgb(c) {
+            return 'rgb(' + c.r + ', ' + c.g + ', ' + c.b + ')';
+          }
+
+          function blendOver(fg, bg) {
+            var a = clamp(fg.a, 0, 1);
+            if (a >= 0.99) return { r: fg.r, g: fg.g, b: fg.b, a: 1 };
+            return {
+              r: Math.round(fg.r * a + bg.r * (1 - a)),
+              g: Math.round(fg.g * a + bg.g * (1 - a)),
+              b: Math.round(fg.b * a + bg.b * (1 - a)),
+              a: 1
+            };
+          }
+
+          function extractGradientStops(bgImage) {
+            if (!bgImage || bgImage === 'none' || bgImage.indexOf('gradient') === -1 || bgImage.indexOf('url(') !== -1) return null;
+            var stops = [];
+            var rgbs = bgImage.match(/rgba?\\([^)]+\\)|#[0-9a-fA-F]{3,6}/g);
+            if (!rgbs) return null;
+            for (var i = 0; i < rgbs.length; i++) {
+              var parsed = parseColor(rgbs[i]);
+              if (parsed && parsed.a > 0.15) stops.push(parsed);
+            }
+            return stops.length > 0 ? stops : null;
+          }
+
+          function isLikelyButton(el, cs) {
+            var tag = el.tagName;
+            if (tag === 'BUTTON') return true;
+            if (tag === 'A' && (cs.display === 'inline-block' || cs.display === 'block' || parseFloat(cs.paddingTop) >= 6 || parseFloat(cs.paddingLeft) >= 10)) {
+              return true;
             }
             return false;
           }
-          function adaptDomForDark() {
-            if (hasAuthorDarkMedia()) return;
-            var nodes = document.querySelectorAll('body, div, table, tbody, thead, tr, td, th, section, article, main, header, footer, p, span, li, ul, ol, h1, h2, h3, h4, h5, h6, b, strong, em, small, font, blockquote');
-            for (var i = 0; i < nodes.length; i++) {
-              var el = nodes[i];
+
+          function adaptEmailForDarkMode() {
+            if (!IS_DARK || !document.body) return;
+
+            var skipTags = { SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, HEAD: 1, META: 1, LINK: 1, TITLE: 1, BR: 1 };
+            var all = document.body.querySelectorAll('*');
+            var list = [document.body];
+            for (var i = 0; i < all.length; i++) {
+              if (!skipTags[all[i].tagName]) list.push(all[i]);
+            }
+
+            // PASSE 1 : Normalisation intelligente des fonds, dégradés, boîtes pastel et bordures
+            for (var j = 0; j < list.length; j++) {
+              var el = list[j];
               var cs = window.getComputedStyle(el);
-              var bg = parseRgb(cs.backgroundColor);
-              if (bg && bg.a > 0.15) {
-                var bgL = lum(bg), bgS = sat(bg);
-                if (bgL > 0.92 && bgS < 0.12) {
-                  el.style.setProperty('background-color', el === document.body ? 'transparent' : '#101726', 'important');
-                } else if (bgL > 0.82 && bgS < 0.18) {
-                  el.style.setProperty('background-color', '#192338', 'important');
+
+              // 1a. Dégradés CSS (ex: linear-gradient(#ffffff, #f1f5f9) dont backgroundColor vaut transparent !)
+              var gradStops = extractGradientStops(cs.backgroundImage);
+              if (gradStops) {
+                var sumLum = 0, minLum = 1;
+                for (var g = 0; g < gradStops.length; g++) {
+                  var gl = wcagLum(gradStops[g]);
+                  sumLum += gl;
+                  if (gl < minLum) minLum = gl;
+                }
+                var avgLum = sumLum / gradStops.length;
+                if (minLum > 0.48 || avgLum > 0.62) {
+                  el.style.setProperty('background-image', 'none', 'important');
+                  el.style.setProperty('background-color', el === document.body ? 'transparent' : '#162033', 'important');
+                } else {
+                  el.setAttribute('data-vm-grad-lum', String(avgLum.toFixed(3)));
                 }
               }
-              var bd = parseRgb(cs.borderTopColor);
-              if (bd && bd.a > 0.2 && lum(bd) > 0.78 && sat(bd) < 0.2) {
-                el.style.setProperty('border-color', 'rgba(148, 179, 226, 0.22)', 'important');
+
+              // 1b. Couleurs de fond (attributs HTML bgcolor inclus)
+              var bg = parseColor(cs.backgroundColor);
+              if (bg && bg.a > 0.08) {
+                var compBg = blendOver(bg, { r: 255, g: 255, b: 255, a: 1 });
+                var bgL = wcagLum(compBg);
+                var hsl = rgbToHsl(compBg);
+                var btn = isLikelyButton(el, cs);
+
+                if (el === document.body || el === document.documentElement) {
+                  if (bgL > 0.35) {
+                    el.style.setProperty('background-color', 'transparent', 'important');
+                  }
+                } else if (bgL > 0.85 && hsl.s < 0.22) {
+                  // Blanc pur / quasi-blanc -> surface ardoise sombre principale
+                  el.style.setProperty('background-color', '#101726', 'important');
+                } else if (bgL >= 0.48 && hsl.s < 0.20) {
+                  // Gris clair / entête de tableau / carte secondaire -> ardoise surélevée
+                  el.style.setProperty('background-color', '#182338', 'important');
+                } else if (bgL >= 0.46 && hsl.s >= 0.20 && !(btn && hsl.s >= 0.55 && bgL < 0.72)) {
+                  // Boîtes d'alerte / badges pastel (#DBEAFE, #FEF3C7, #DCFCE7, #FEE2E2, #F3E8FF) :
+                  // conserve la teinte exacte (hue) tout en l'assombrissant en verre teinté sombre !
+                  var darkTinted = hslToRgb(hsl.h, Math.min(0.46, Math.max(0.24, hsl.s * 0.65)), 0.17);
+                  el.style.setProperty('background-color', toCssRgb(darkTinted), 'important');
+                }
               }
-              var fg = parseRgb(cs.color);
-              if (fg && fg.a > 0.2) {
-                var fgL = lum(fg), fgS = sat(fg);
-                if (fgL < 0.22 && fgS < 0.45) {
-                  el.style.setProperty('color', '#F1F6FD', 'important');
-                } else if (fgL >= 0.22 && fgL < 0.42 && fgS < 0.35) {
-                  el.style.setProperty('color', '#B8C6DC', 'important');
+
+              // 1c. Bordures claires & ombres portées agressives
+              var sides = ['Top', 'Right', 'Bottom', 'Left'];
+              for (var sIdx = 0; sIdx < sides.length; sIdx++) {
+                var side = sides[sIdx];
+                if (parseFloat(cs['border' + side + 'Width']) > 0) {
+                  var bc = parseColor(cs['border' + side + 'Color']);
+                  if (bc && bc.a > 0.15 && wcagLum(bc) > 0.45 && rgbToHsl(bc).s < 0.35) {
+                    el.style.setProperty('border-' + side.toLowerCase() + '-color', 'rgba(148, 179, 226, 0.20)', 'important');
+                  }
+                }
+              }
+
+              // 1d. Icônes SVG monochromes noires en ligne
+              if (el.tagName === 'SVG' || el.tagName === 'PATH') {
+                var fillCol = parseColor(cs.fill);
+                if (fillCol && fillCol.a > 0.4 && wcagLum(fillCol) < 0.06) {
+                  el.style.setProperty('fill', '#E2EEFF', 'important');
                 }
               }
             }
+
+            // Fonction de résolution du fond réel effectif derrière n'importe quel élément après la Passe 1
+            function resolveEffectiveBg(node) {
+              var cur = node;
+              while (cur && cur !== document.documentElement) {
+                var gradAttr = cur.getAttribute && cur.getAttribute('data-vm-grad-lum');
+                if (gradAttr !== null && gradAttr !== '') {
+                  var gl = parseFloat(gradAttr);
+                  var v = Math.round(Math.pow(clamp(gl, 0, 1), 1 / 2.2) * 255);
+                  return { r: v, g: v, b: v, a: 1 };
+                }
+                var ccs = window.getComputedStyle(cur);
+                if (ccs.backgroundImage && ccs.backgroundImage.indexOf('url(') !== -1) {
+                  // Image de fond : on ne force pas l'inversion aveugle par-dessus une bannière photo
+                  return null;
+                }
+                var b = parseColor(ccs.backgroundColor);
+                if (b && b.a > 0.08) {
+                  if (b.a >= 0.92) return b;
+                  var parentBg = resolveEffectiveBg(cur.parentElement) || ROOT_DARK_BG;
+                  return blendOver(b, parentBg);
+                }
+                cur = cur.parentElement;
+              }
+              return ROOT_DARK_BG;
+            }
+
+            // PASSE 2 : Garantie mathématique de contraste WCAG >= 4.8:1 sur tous les textes et liens
+            for (var k = 0; k < list.length; k++) {
+              var node = list[k];
+              var ncs = window.getComputedStyle(node);
+              var fg = parseColor(ncs.color);
+              if (!fg || fg.a < 0.12) continue;
+
+              var effBg = resolveEffectiveBg(node);
+              if (!effBg) continue;
+
+              var bgLum = wcagLum(effBg);
+              var fgLum = wcagLum(fg);
+              var ratio = contrastRatio(fgLum, bgLum);
+
+              if (ratio >= 4.6) continue; // Déjà parfaitement lisible (ex: texte blanc sur bouton bleu #0078D4) !
+
+              var fgHsl = rgbToHsl(fg);
+              if (bgLum < 0.35) {
+                // Surface sombre : éclaircissement haute lisibilité
+                if (fgHsl.s < 0.16 && node.tagName !== 'A') {
+                  // Nuances de noir / gris anthracite -> hiérarchie typographique claire
+                  if (fgLum < 0.05) {
+                    node.style.setProperty('color', '#F1F6FD', 'important');
+                  } else if (fgLum < 0.16) {
+                    node.style.setProperty('color', '#CBD6E8', 'important');
+                  } else {
+                    node.style.setProperty('color', '#A8B8D0', 'important');
+                  }
+                } else {
+                  // Texte ou lien coloré sombre (ex: bleu marine #003366, #1A0DAB, violet, vert forêt, bordeaux) :
+                  // conserve exactement la teinte (hue) et augmente la luminosité jusqu'à atteindre un contraste >= 5.2:1 !
+                  var targetHue = node.tagName === 'A' && fgHsl.s < 0.16 ? 210 : fgHsl.h;
+                  var targetSat = node.tagName === 'A' && fgHsl.s < 0.16 ? 0.88 : Math.min(0.90, Math.max(0.48, fgHsl.s));
+                  var best = hslToRgb(targetHue, targetSat, Math.max(fgHsl.l, 0.72));
+                  for (var stepL = Math.max(fgHsl.l, 0.62); stepL <= 0.93; stepL += 0.04) {
+                    var cand = hslToRgb(targetHue, targetSat, stepL);
+                    best = cand;
+                    if (contrastRatio(wcagLum(cand), bgLum) >= 5.2) break;
+                  }
+                  node.style.setProperty('color', toCssRgb(best), 'important');
+                }
+              } else {
+                // Surface restée volontairement claire/vive (ex: bouton jaune/ambre vif #FBBF24) : texte sombre net
+                node.style.setProperty('color', '#0F172A', 'important');
+              }
+            }
           }
+
+          function fitWideTablesAndReportHeight() {
+            if (!document.body) return;
+            var vw = window.innerWidth || document.documentElement.clientWidth || 360;
+            if (vw <= 0) return;
+
+            // Réinitialise une éventuelle mise à l'échelle précédente avant mesure
+            document.body.style.zoom = '';
+            document.body.style.transform = '';
+            document.body.style.width = '';
+
+            // Supprime les min-width rigides excessifs sur les conteneurs non-tabulaires
+            var wrappers = document.body.querySelectorAll('div, section, article, main, header, footer, center');
+            for (var i = 0; i < wrappers.length; i++) {
+              var wcs = window.getComputedStyle(wrappers[i]);
+              var mw = parseFloat(wcs.minWidth);
+              if (!isNaN(mw) && mw > vw) {
+                wrappers[i].style.setProperty('min-width', '0px', 'important');
+                wrappers[i].style.setProperty('max-width', '100%', 'important');
+              }
+            }
+
+            // Si un tableau HTML fixe (ex: newsletter 600px/640px) dépasse encore la largeur de l'écran iPhone,
+            // adapte proportionnellement l'échelle pour qu'aucune colonne droite ne soit jamais tronquée !
+            var contentW = Math.max(document.documentElement.scrollWidth, document.body.scrollWidth);
+            var scale = 1;
+            if (contentW > vw + 4) {
+              scale = vw / contentW;
+              document.body.style.width = contentW + 'px';
+              document.body.style.transformOrigin = 'top left';
+              document.body.style.transform = 'scale(' + scale.toFixed(4) + ')';
+            }
+
+            var rawH = Math.max(
+              document.body.scrollHeight,
+              document.body.offsetHeight,
+              document.documentElement.scrollHeight
+            );
+            var finalH = Math.ceil(rawH * scale) + 18;
+            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.vipleMailHeight) {
+              window.webkit.messageHandlers.vipleMailHeight.postMessage(finalH);
+            }
+            return finalH;
+          }
+
+          var didBindImages = false;
+          function bindImageLoadListeners() {
+            if (didBindImages) return;
+            var imgs = document.images || [];
+            if (imgs.length === 0) return;
+            didBindImages = true;
+            for (var i = 0; i < imgs.length; i++) {
+              imgs[i].addEventListener('load', fitWideTablesAndReportHeight);
+            }
+          }
+
+          function runAll() {
+            try { adaptEmailForDarkMode(); } catch (e) {}
+            try { bindImageLoadListeners(); } catch (e) {}
+            try { fitWideTablesAndReportHeight(); } catch (e) {}
+          }
+
           if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', adaptDomForDark);
+            document.addEventListener('DOMContentLoaded', runAll);
           } else {
-            adaptDomForDark();
+            runAll();
           }
+          window.addEventListener('load', function() {
+            bindImageLoadListeners();
+            fitWideTablesAndReportHeight();
+          });
+          setTimeout(fitWideTablesAndReportHeight, 140);
+          setTimeout(fitWideTablesAndReportHeight, 500);
+          setTimeout(fitWideTablesAndReportHeight, 1200);
         })();
         </script>
-        """ : ""
+        """
 
         let wrapped = """
         <!doctype html>
         <html>
         <head>
         <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="color-scheme" content="\(schemeMeta)">
         <meta name="supported-color-schemes" content="\(schemeMeta)">
         <style>\(baseCss)</style>
         </head>
-        <body>\(htmlBody)\(darkNormalizerScript)</body>
+        <body>\(htmlBody)\(runtimeScript)</body>
         </html>
         """
         let cacheSignature = "\(renderDark ? "D" : "L")|\(wrapped)"
@@ -168,17 +485,22 @@ private struct VipleMailHTMLWebView: UIViewRepresentable {
             self.parent = parent
         }
 
+        func applyMeasuredHeight(_ h: CGFloat) {
+            let clamped = max(120, h)
+            if abs(parent.dynamicHeight - clamped) > 1.5 {
+                parent.dynamicHeight = clamped
+            }
+        }
+
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             Task { @MainActor [weak self, weak webView] in
                 guard let self, let webView else { return }
-                if let result = try? await webView.evaluateJavaScript("document.documentElement.scrollHeight") {
+                if let result = try? await webView.evaluateJavaScript("Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)") {
                     if let num = result as? NSNumber {
                         let h = CGFloat(truncating: num)
-                        if h > 0 {
-                            self.parent.dynamicHeight = max(120, h + 16)
+                        if h > 0 && self.parent.dynamicHeight <= 225 {
+                            self.applyMeasuredHeight(h + 18)
                         }
-                    } else if let h = result as? CGFloat, h > 0 {
-                        self.parent.dynamicHeight = max(120, h + 16)
                     }
                 }
             }
@@ -705,14 +1027,50 @@ public struct MessageDetailView: View {
     // MARK: - 4. Corps du Courrier Pleine Largeur (Zéro Carte / Zéro Bulle)
 
     private func hasRichHTML(_ raw: String) -> Bool {
-        let lower = raw.lowercased()
-        return lower.contains("<div") || lower.contains("<table") || lower.contains("<p") || lower.contains("<img") || lower.contains("<a ") || lower.contains("<ul") || lower.contains("<blockquote") || lower.contains("<h1") || lower.contains("<h2") || lower.contains("<style")
+        let lower = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !lower.isEmpty else { return false }
+        return lower.contains("<html") || lower.contains("<body") || lower.contains("<div") || lower.contains("<table") || lower.contains("<p") || lower.contains("<img") || lower.contains("<a ") || lower.contains("<ul") || lower.contains("<ol") || lower.contains("<blockquote") || lower.contains("<h1") || lower.contains("<h2") || lower.contains("<h3") || lower.contains("<style") || lower.contains("<span") || lower.contains("<font") || lower.contains("<center") || lower.contains("<section") || lower.contains("<article") || lower.contains("<br")
     }
 
     private func classicEmailBodySection(_ msg: VipleMailMessage) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 10) {
             #if canImport(WebKit) && canImport(UIKit)
             if hasRichHTML(msg.bodyHtml) {
+                if colorScheme == .dark {
+                    HStack {
+                        Spacer()
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                if vm.adaptHtmlEmailsInDarkMode {
+                                    forceOriginalLightEmail.toggle()
+                                } else {
+                                    vm.adaptHtmlEmailsInDarkMode = true
+                                    forceOriginalLightEmail = false
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: effectiveRenderHtmlDark ? "sun.max.fill" : "moon.stars.fill")
+                                    .font(.system(size: 10.5, weight: .bold))
+                                Text(effectiveRenderHtmlDark ? "Voir l'original clair" : "Adapter au mode sombre")
+                                    .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                            }
+                            .foregroundStyle(VipleMailPalette.primary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(
+                                Capsule()
+                                    .fill(VipleMailPalette.surfaceSubtle)
+                                    .overlay(
+                                        Capsule()
+                                            .stroke(VipleMailPalette.border, lineWidth: 1)
+                                    )
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
                 if colorScheme == .dark && !effectiveRenderHtmlDark {
                     VipleMailHTMLWebView(
                         htmlBody: msg.bodyHtml,
@@ -755,7 +1113,7 @@ public struct MessageDetailView: View {
             #endif
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 18)
+        .padding(.vertical, 16)
         .frame(maxWidth: .infinity, minHeight: 220, alignment: .topLeading)
     }
 

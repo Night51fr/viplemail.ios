@@ -334,11 +334,22 @@ public struct SecureMailReaderView: View {
     }
 
     private static func stripBasicHtmlIfNeeded(_ raw: String) -> String {
-        guard raw.contains("<") && raw.contains(">") else { return raw }
+        guard raw.contains("<") || raw.contains("&") else { return raw }
         return raw
-            .replacingOccurrences(of: "<br\\s*/?>", with: "\n", options: .regularExpression)
+            .replacingOccurrences(of: "<style[^>]*>[\\s\\S]*?</style>", with: "", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: "<script[^>]*>[\\s\\S]*?</script>", with: "", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: "<br\\s*/?>", with: "\n", options: [.regularExpression, .caseInsensitive])
             .replacingOccurrences(of: "</p>", with: "\n\n", options: .caseInsensitive)
+            .replacingOccurrences(of: "</div>", with: "\n", options: .caseInsensitive)
             .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(of: "&rsquo;", with: "’")
+            .replacingOccurrences(of: "&lsquo;", with: "‘")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
