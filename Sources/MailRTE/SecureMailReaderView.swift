@@ -614,7 +614,7 @@ public struct MailRteCenelisPinGateView: View {
             }
             if info.isAgent == false {
                 errorMessage = info.error ?? "Accès réservé aux Agents Cenelis."
-            } else if info.needsSetup == true || info.hasPin == false {
+            } else if info.hasPin == false {
                 errorMessage = info.error ?? "Configurez d'abord votre code PIN Cenelis Connect depuis la Console Admin ou Cenelis Connect."
             }
         }
