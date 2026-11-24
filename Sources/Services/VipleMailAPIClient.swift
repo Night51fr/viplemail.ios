@@ -31,6 +31,7 @@ public final class VipleMailTLSSessionDelegate: NSObject, URLSessionDelegate, Se
 @MainActor
 public final class VipleMailAPIClient {
     public static let shared = VipleMailAPIClient()
+    public static let clientVersion = "2026.11.18"
 
     public let primaryBaseURL = "https://mail.viplemail.fr/api/mobile/v1/mail"
     public let fallbackBaseURL = "https://viplemail.fr/api/mobile/v1/mail"
@@ -107,12 +108,38 @@ public final class VipleMailAPIClient {
         return nil
     }
 
+    public var resolvedPhysicalDeviceId: String {
+        CenelisDeviceIdentity.sharedPhysicalDeviceId(fallbackVendorId: resolvedDeviceIdentifier)
+    }
+
+    nonisolated public static func isSessionRevokedError(_ error: Error) -> Bool {
+        let nsErr = error as NSError
+        if nsErr.domain == "VipleMailAPI" {
+            if (nsErr.userInfo["sessionRevoked"] as? Bool) == true {
+                return true
+            }
+            if nsErr.code == 401 {
+                return true
+            }
+        }
+        return false
+    }
+
     private func applyDeviceHeaders(to req: inout URLRequest) async {
+        let devId = resolvedDeviceIdentifier
+        let physicalId = CenelisDeviceIdentity.sharedPhysicalDeviceId(fallbackVendorId: devId)
+        let modelCode = CenelisDeviceIdentity.hardwareModelCode()
+        let modelName = CenelisDeviceIdentity.friendlyModelName()
+        let osVer = CenelisDeviceIdentity.osVersionString()
+        let safeModelCode = CenelisDeviceIdentity.httpHeaderSafe(modelCode)
+        let safeModelName = CenelisDeviceIdentity.httpHeaderSafe(modelName)
+        let safeOsVer = CenelisDeviceIdentity.httpHeaderSafe(osVer)
+
         req.setValue("Viple Mail", forHTTPHeaderField: "X-Viple-App-Name")
-        req.setValue("2026.11.16", forHTTPHeaderField: "X-Viple-Client-Version")
+        req.setValue(Self.clientVersion, forHTTPHeaderField: "X-Viple-Client-Version")
         req.setValue("1.0", forHTTPHeaderField: "X-Cenelis-MailRTE-Version")
         req.setValue(UUID().uuidString.lowercased(), forHTTPHeaderField: "X-Viple-Request-Id")
-        req.setValue("VipleMail-iOS/2026.11.16 (iPhone; iOS 18.0+; mail.viplemail.fr; MailRTE/1.0)", forHTTPHeaderField: "User-Agent")
+        req.setValue("VipleMail-iOS/\(Self.clientVersion) (\(safeModelName.isEmpty ? "iPhone" : safeModelName); \(safeOsVer.isEmpty ? "iOS" : safeOsVer); mail.viplemail.fr; MailRTE/1.0)", forHTTPHeaderField: "User-Agent")
         let currentToken = authToken ?? ""
         if !currentToken.isEmpty {
             req.setValue("Bearer \(currentToken)", forHTTPHeaderField: "Authorization")
@@ -125,10 +152,21 @@ public final class VipleMailAPIClient {
            ) {
             req.setValue(dpopJwt, forHTTPHeaderField: "DPoP")
         }
-        let devId = resolvedDeviceIdentifier
         if !devId.isEmpty {
             req.setValue(devId, forHTTPHeaderField: "X-Viple-Vendor-Id")
             req.setValue(devId, forHTTPHeaderField: "X-Viple-Device-Id")
+        }
+        if !physicalId.isEmpty {
+            req.setValue(physicalId, forHTTPHeaderField: "X-Viple-Physical-Device-Id")
+        }
+        if !safeModelCode.isEmpty {
+            req.setValue(safeModelCode, forHTTPHeaderField: "X-Viple-Hardware-Model")
+        }
+        if !safeModelName.isEmpty {
+            req.setValue(safeModelName, forHTTPHeaderField: "X-Viple-Model-Name")
+        }
+        if !safeOsVer.isEmpty {
+            req.setValue(safeOsVer, forHTTPHeaderField: "X-Viple-OS-Version")
         }
         #if canImport(UIKit)
         let dev = UIDevice.current
@@ -141,6 +179,8 @@ public final class VipleMailAPIClient {
     public func getJSON<T: Decodable>(_ path: String, queryItems: [URLQueryItem] = []) async throws -> T {
         do {
             return try await performGet(base: primaryBaseURL, path: path, queryItems: queryItems)
+        } catch let err as NSError where err.domain == "VipleMailAPI" && (err.code == 401 || (err.userInfo["sessionRevoked"] as? Bool) == true) {
+            throw err
         } catch {
             if !path.hasPrefix("http") {
                 return try await performGet(base: fallbackBaseURL, path: path, queryItems: queryItems)
@@ -166,9 +206,24 @@ public final class VipleMailAPIClient {
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             if let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 let msg = (dict["message"] as? String) ?? (dict["error"] as? String) ?? "Erreur serveur Viple Mail (\(http.statusCode))"
-                throw NSError(domain: "VipleMailAPI", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: msg])
+                let sessionRevoked = (dict["sessionRevoked"] as? Bool) == true
+                throw NSError(
+                    domain: "VipleMailAPI",
+                    code: http.statusCode,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: msg,
+                        "sessionRevoked": sessionRevoked
+                    ]
+                )
             }
-            throw NSError(domain: "VipleMailAPI", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "Erreur serveur Viple Mail (\(http.statusCode))"])
+            throw NSError(
+                domain: "VipleMailAPI",
+                code: http.statusCode,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "Erreur serveur Viple Mail (\(http.statusCode))",
+                    "sessionRevoked": http.statusCode == 401
+                ]
+            )
         }
         return try decoder.decode(T.self, from: data)
     }
@@ -201,9 +256,24 @@ public final class VipleMailAPIClient {
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             if let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 let msg = (dict["message"] as? String) ?? (dict["error"] as? String) ?? "Erreur serveur Viple Mail (\(http.statusCode))"
-                throw NSError(domain: "VipleMailAPI", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: msg])
+                let sessionRevoked = (dict["sessionRevoked"] as? Bool) == true
+                throw NSError(
+                    domain: "VipleMailAPI",
+                    code: http.statusCode,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: msg,
+                        "sessionRevoked": sessionRevoked
+                    ]
+                )
             }
-            throw NSError(domain: "VipleMailAPI", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "Erreur serveur Viple Mail (\(http.statusCode))"])
+            throw NSError(
+                domain: "VipleMailAPI",
+                code: http.statusCode,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "Erreur serveur Viple Mail (\(http.statusCode))",
+                    "sessionRevoked": http.statusCode == 401
+                ]
+            )
         }
         return try decoder.decode(T.self, from: data)
     }
@@ -237,7 +307,15 @@ public final class VipleMailAPIClient {
         let dict = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             let msg = (dict["message"] as? String) ?? (dict["error"] as? String) ?? "Impossible d'exécuter l'opération sur Viple Mail."
-            throw NSError(domain: "VipleMailAPI", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: msg])
+            let sessionRevoked = (dict["sessionRevoked"] as? Bool) == true
+            throw NSError(
+                domain: "VipleMailAPI",
+                code: http.statusCode,
+                userInfo: [
+                    NSLocalizedDescriptionKey: msg,
+                    "sessionRevoked": sessionRevoked
+                ]
+            )
         }
         return dict
     }
@@ -668,8 +746,18 @@ public final class VipleMailAPIClient {
             req.setValue("application/json", forHTTPHeaderField: "Accept")
             await applyDeviceHeaders(to: &req)
             let (data, response) = try await backgroundPollSession.data(for: req)
-            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-                throw URLError(.badServerResponse)
+            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                let dict = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+                let revoked = (dict["sessionRevoked"] as? Bool) == true || http.statusCode == 401
+                let msg = (dict["message"] as? String) ?? (dict["error"] as? String) ?? "Erreur serveur Viple Mail (\(http.statusCode))"
+                throw NSError(
+                    domain: "VipleMailAPI",
+                    code: http.statusCode,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: msg,
+                        "sessionRevoked": revoked
+                    ]
+                )
             }
             return try decoder.decode(VipleMailNotificationPollResponse.self, from: data)
         }
@@ -777,6 +865,16 @@ public final class VipleMailAPIClient {
     ) async {
         let devId = resolvedDeviceIdentifier
         guard !devId.isEmpty, !email.isEmpty else { return }
+        let physicalId = CenelisDeviceIdentity.sharedPhysicalDeviceId(fallbackVendorId: devId)
+        let modelCode = CenelisDeviceIdentity.hardwareModelCode()
+        let modelName = CenelisDeviceIdentity.friendlyModelName()
+        let osVer = CenelisDeviceIdentity.osVersionString()
+        #if canImport(UIKit)
+        let rawDeviceName = UIDevice.current.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let deviceName = (rawDeviceName.isEmpty || rawDeviceName == "iPhone" || rawDeviceName == "iPad") ? modelName : rawDeviceName
+        #else
+        let deviceName = modelName
+        #endif
         #if DEBUG
         let apnsEnv = "sandbox"
         #else
@@ -787,24 +885,70 @@ public final class VipleMailAPIClient {
             "cid": cid ?? "",
             "deviceId": devId,
             "vendorId": devId,
+            "physicalDeviceId": physicalId,
+            "deviceModelCode": modelCode,
+            "deviceModelName": modelName,
+            "deviceName": deviceName,
+            "osVersion": osVer,
             "apnsToken": apnsToken ?? "",
             "apnsEnvironment": apnsEnv,
             "appleTeamId": Self.detectAppleTeamIdFromKeychain(),
             "platform": "iOS",
-            "appVersion": "2026.11.17",
+            "appVersion": Self.clientVersion,
             "notificationsEnabled": notificationsEnabled,
             "vipOnly": vipOnly
         ]
         _ = try? await postRaw("/devices/register", body: payload)
     }
 
-    public func unregisterDeviceForPush(email: String?) async {
+    public func unregisterDeviceForPush(email: String?, cid: String? = nil) async {
         let devId = resolvedDeviceIdentifier
         guard !devId.isEmpty else { return }
+        let physicalId = CenelisDeviceIdentity.sharedPhysicalDeviceId(fallbackVendorId: devId)
+        let modelCode = CenelisDeviceIdentity.hardwareModelCode()
+        let modelName = CenelisDeviceIdentity.friendlyModelName()
+        let osVer = CenelisDeviceIdentity.osVersionString()
         _ = try? await postRaw("/devices/unregister", body: [
             "email": email ?? "",
+            "cid": cid ?? "",
             "deviceId": devId,
-            "vendorId": devId
+            "vendorId": devId,
+            "physicalDeviceId": physicalId,
+            "deviceModelCode": modelCode,
+            "deviceModelName": modelName,
+            "osVersion": osVer,
+            "platform": "iOS",
+            "appVersion": Self.clientVersion
+        ])
+    }
+
+    // MARK: - 5. Gestionnaire d'Appareils Connectés & Révocation à Distance (Écosystème Cenelis × Viple)
+
+    public func fetchConnectedDevices(email: String, cid: String?) async throws -> VipleConnectedDevicesResponse {
+        let devId = resolvedDeviceIdentifier
+        let physicalId = CenelisDeviceIdentity.sharedPhysicalDeviceId(fallbackVendorId: devId)
+        var items: [URLQueryItem] = [
+            URLQueryItem(name: "email", value: email),
+            URLQueryItem(name: "currentDeviceId", value: devId),
+            URLQueryItem(name: "currentPhysicalDeviceId", value: physicalId)
+        ]
+        if let cid, !cid.isEmpty {
+            items.append(URLQueryItem(name: "cid", value: cid))
+        }
+        return try await getJSON("/devices/sessions", queryItems: items)
+    }
+
+    public func revokeConnectedDevice(
+        email: String,
+        cid: String?,
+        targetDeviceId: String,
+        targetAppId: String = "*"
+    ) async throws -> VipleDeviceRevokeResponse {
+        try await postJSON("/devices/revoke", body: [
+            "email": email,
+            "cid": cid ?? "",
+            "targetDeviceId": targetDeviceId,
+            "targetAppId": targetAppId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "*" : targetAppId
         ])
     }
 }

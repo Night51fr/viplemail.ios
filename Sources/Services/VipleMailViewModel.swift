@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UserNotifications
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -75,6 +76,8 @@ public final class VipleMailViewModel: ObservableObject {
     @Published public var chatUnreadCount: Int = 0
     @Published public var settings: VipleMailSettings = VipleMailSettings()
     @Published public var lastDiagnosticsPing: VipleMailDiagnosticsPing? = nil
+    @Published public var connectedDevices: [VipleConnectedDeviceDto] = []
+    @Published public var isLoadingConnectedDevices: Bool = false
 
     // Apparence & Mode Sombre (Automatique iOS / Clair / Sombre OLED + Rendu adaptatif des e-mails HTML)
     @Published public var appearanceMode: VipleMailAppearanceMode = .system {
@@ -497,6 +500,10 @@ public final class VipleMailViewModel: ObservableObject {
                 cid: targetCid,
                 folder: activeFolderId
             )
+            if res.sessionRevoked == true {
+                handleRemoteSessionRevoked()
+                return
+            }
             if res.isAuthenticated, let user = res.user {
                 let unified = (res.isUnifiedInbox == true) || (res.mailbox?.emailAddress.lowercased() == "__all__")
                 let resolvedMailbox = unified
@@ -558,16 +565,7 @@ public final class VipleMailViewModel: ObservableObject {
                     messages: self.messages,
                     settings: self.settings
                 )
-                if self.settings.pushNotificationsEnabled {
-                    _ = await VipleMailNotificationManager.shared.requestPermissionIfNeeded(promptIfNotDetermined: true)
-                    await VipleMailAPIClient.shared.registerDeviceForPush(
-                        email: ownerPrimary,
-                        cid: user.cid,
-                        apnsToken: VipleMailNotificationManager.shared.apnsDeviceTokenHex,
-                        notificationsEnabled: self.settings.pushNotificationsEnabled,
-                        vipOnly: self.settings.vipNotificationsOnly
-                    )
-                }
+                await syncDevicePushRegistration(promptIfNotDetermined: self.settings.pushNotificationsEnabled)
                 if let pendingId = defaults.string(forKey: "viple.mail.ios.pendingOpenMsgId"), !pendingId.isEmpty {
                     defaults.removeObject(forKey: "viple.mail.ios.pendingOpenMsgId")
                     await openMessageByIdFromNotification(pendingId, presentReplyComposer: false)
@@ -576,6 +574,10 @@ public final class VipleMailViewModel: ObservableObject {
                 self.isAuthenticated = false
             }
         } catch {
+            if VipleMailAPIClient.isSessionRevokedError(error) {
+                handleRemoteSessionRevoked()
+                return
+            }
             print("[VipleMail] Erreur bootstrap: \(error.localizedDescription)")
         }
     }
@@ -878,6 +880,18 @@ public final class VipleMailViewModel: ObservableObject {
         }
     }
 
+    public func syncDevicePushRegistration(promptIfNotDetermined: Bool = false) async {
+        let owner = primaryHostedEmail
+        guard !owner.isEmpty, owner != "__all__" else { return }
+        await VipleMailNotificationManager.shared.syncDevicePushRegistration(
+            email: owner,
+            cid: currentCid,
+            notificationsEnabled: settings.pushNotificationsEnabled,
+            vipOnly: settings.vipNotificationsOnly,
+            promptIfNotDetermined: promptIfNotDetermined
+        )
+    }
+
     private func finalizeAuthenticatedSession(
         user: VipleMailUser,
         token: String?,
@@ -885,7 +899,17 @@ public final class VipleMailViewModel: ObservableObject {
         availableMailboxes: [String]? = nil,
         welcomeToast: String
     ) async {
+        let previousOwner = primaryHostedEmail
+        let ownerPrimary = user.primaryAddress.lowercased()
         let resolvedMbx = (preferredMailbox?.isEmpty == false ? preferredMailbox! : user.primaryAddress).lowercased()
+
+        if !previousOwner.isEmpty && previousOwner != ownerPrimary {
+            #if canImport(UIKit)
+            UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+            UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+            #endif
+        }
+
         self.currentUser = user
         self.isApprovedCenelisAgent = (user.isApprovedCenelisAgent == true)
             || (user.accountType?.lowercased() == "cenelis")
@@ -899,6 +923,7 @@ public final class VipleMailViewModel: ObservableObject {
         self.isAuthenticated = true
         self.detectedCrossAppAccount = nil
         self.isShowingCrossAppSSOPrompt = false
+        defaults.set(ownerPrimary, forKey: savedOwnerEmailKey)
         defaults.set(resolvedMbx, forKey: savedEmailKey)
         if let cid = user.cid, !cid.isEmpty {
             defaults.set(cid, forKey: savedCidKey)
@@ -907,14 +932,36 @@ public final class VipleMailViewModel: ObservableObject {
             defaults.set(token, forKey: savedTokenKey)
             VipleMailAPIClient.shared.authToken = token
         }
-        saveLocalCrossAppSession(user: user, activeEmail: resolvedMbx)
-        await VipleMailAPIClient.shared.announceCrossAppSession(email: resolvedMbx, cid: user.cid)
+        saveLocalCrossAppSession(user: user, activeEmail: ownerPrimary)
+        VipleMailNotificationManager.shared.attachedViewModel = self
+        VipleMailNotificationManager.shared.scheduleBackgroundTasks()
+        VipleMailNotificationManager.shared.startForegroundSyncLoop()
+        await syncDevicePushRegistration(promptIfNotDetermined: true)
+        await VipleMailAPIClient.shared.announceCrossAppSession(email: ownerPrimary, cid: user.cid)
         await refreshBootstrap(email: resolvedMbx, cid: user.cid)
         showToast(welcomeToast)
     }
 
-    public func signOut() {
-        let oldEmail = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
+    public func handleRemoteSessionRevoked() {
+        let hasPersistedSession = !(defaults.string(forKey: savedEmailKey) ?? "").isEmpty
+            || !(defaults.string(forKey: savedOwnerEmailKey) ?? "").isEmpty
+        guard isAuthenticated || hasPersistedSession else { return }
+        signOut(toastMessage: "Cet appareil a été déconnecté à distance.")
+    }
+
+    public func signOut(toastMessage: String? = nil) {
+        // 1. Capture stricte de l'email propriétaire et du CID AVANT toute purge d'état
+        let capturedOwner = primaryHostedEmail
+        let fallbackCurrent = currentEmail.lowercased() == "__all__" ? "" : currentEmail.lowercased()
+        let previousEmail = !capturedOwner.isEmpty
+            ? capturedOwner
+            : (!fallbackCurrent.isEmpty
+                ? fallbackCurrent
+                : (defaults.string(forKey: savedOwnerEmailKey) ?? defaults.string(forKey: savedEmailKey) ?? ""))
+        let previousCid = currentUser?.cid ?? defaults.string(forKey: savedCidKey)
+
+        // 2. Arrêt synchrone immédiat du polling et purge des clés background UserDefaults
+        VipleMailNotificationManager.shared.purgePersistedSessionAndStopSyncImmediately()
         defaults.removeObject(forKey: savedEmailKey)
         defaults.removeObject(forKey: savedOwnerEmailKey)
         defaults.removeObject(forKey: savedCidKey)
@@ -922,6 +969,8 @@ public final class VipleMailViewModel: ObservableObject {
         VipleMailAPIClient.shared.authToken = nil
         sharedGroupDefaults?.removeObject(forKey: "viple.crossapp.mail.account")
         sharedCenelisGroupDefaults?.removeObject(forKey: "viple.crossapp.mail.account")
+
+        // 3. Réinitialisation complète de la session locale
         isAuthenticated = false
         currentUser = nil
         isApprovedCenelisAgent = false
@@ -930,6 +979,7 @@ public final class VipleMailViewModel: ObservableObject {
         activeMailboxAddress = ""
         availableMailboxes = []
         externalAccounts = []
+        connectedDevices = []
         isExternalMailboxActive = false
         activeExternalProviderName = nil
         isUnifiedInboxActive = false
@@ -947,9 +997,14 @@ public final class VipleMailViewModel: ObservableObject {
         selectedMessageIds.removeAll()
         isSelectionMode = false
         selectedTab = 0
-        showToast("Vous êtes déconnecté de Viple Mail.")
+        showToast(toastMessage ?? "Vous êtes déconnecté de Viple Mail.")
+
+        // 4. Désinscription push serveur, remise à zéro du badge et nettoyage SSO inter-apps
         Task {
-            await VipleMailNotificationManager.shared.clearNotificationsOnSignOut(email: oldEmail)
+            await VipleMailNotificationManager.shared.handleUserSignedOut(
+                previousEmail: previousEmail,
+                previousCid: previousCid
+            )
             await VipleMailAPIClient.shared.clearCrossAppSession()
             await checkCrossAppVipleAccount()
         }
@@ -1886,6 +1941,102 @@ public final class VipleMailViewModel: ObservableObject {
             }
         } catch {
             showToast(error.localizedDescription)
+        }
+    }
+
+    // MARK: - 7. Gestionnaire d'Appareils Connectés & Sessions Actives (Écosystème Cenelis × Viple)
+
+    public func refreshConnectedDevices(silent: Bool = false) async {
+        let owner = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
+        guard !owner.isEmpty, owner != "__all__" else { return }
+        if !silent {
+            isLoadingConnectedDevices = true
+        }
+        defer {
+            if !silent {
+                isLoadingConnectedDevices = false
+            }
+        }
+
+        do {
+            let res = try await VipleMailAPIClient.shared.fetchConnectedDevices(
+                email: owner,
+                cid: currentCid
+            )
+            if res.ok {
+                self.connectedDevices = res.devices.sorted { lhs, rhs in
+                    if lhs.isCurrentDevice != rhs.isCurrentDevice {
+                        return lhs.isCurrentDevice && !rhs.isCurrentDevice
+                    }
+                    return (lhs.lastSeenAtUtc ?? lhs.connectedAtUtc ?? "") > (rhs.lastSeenAtUtc ?? rhs.connectedAtUtc ?? "")
+                }
+            } else if !silent, let err = res.error {
+                showToast(err)
+            }
+        } catch {
+            if VipleMailAPIClient.isSessionRevokedError(error) {
+                handleRemoteSessionRevoked()
+                return
+            }
+            if !silent {
+                showToast(error.localizedDescription)
+            }
+        }
+    }
+
+    /// Révoque à distance un appareil complet (`targetAppId == "*"`) ou une application précise de l'écosystème.
+    /// Retourne `true` si la session locale Viple Mail de cet appareil vient d'être fermée.
+    @discardableResult
+    public func revokeDeviceSession(
+        device: VipleConnectedDeviceDto,
+        targetAppId: String = "*",
+        appDisplayName: String? = nil
+    ) async -> Bool {
+        let owner = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
+        guard !owner.isEmpty, owner != "__all__" else { return false }
+
+        let normalizedApp = targetAppId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveAppId = normalizedApp.isEmpty ? "*" : normalizedApp
+        let lowerApp = effectiveAppId.lowercased()
+        let revokesLocalVipleMail = device.isCurrentDevice && (
+            lowerApp == "*"
+            || lowerApp == "viple-mail"
+            || lowerApp == "viplemail"
+            || lowerApp == "com.viplenetwork.viplemail"
+        )
+
+        do {
+            let res = try await VipleMailAPIClient.shared.revokeConnectedDevice(
+                email: owner,
+                cid: currentCid,
+                targetDeviceId: device.deviceId,
+                targetAppId: effectiveAppId
+            )
+            guard res.ok else {
+                showToast(res.error ?? "Impossible de révoquer la session distante.")
+                return false
+            }
+
+            if revokesLocalVipleMail || res.revokedCurrentDevice == true && lowerApp == "*" {
+                signOut(toastMessage: "Cet appareil a été déconnecté de votre compte.")
+                return true
+            }
+
+            await refreshConnectedDevices(silent: true)
+            if effectiveAppId == "*" {
+                showToast(res.message ?? "\(device.resolvedModelDisplayName) a été déconnecté à distance.")
+            } else {
+                let label = appDisplayName ?? effectiveAppId
+                showToast(res.message ?? "\(label) a été déconnecté sur \(device.resolvedModelDisplayName).")
+            }
+            return false
+        } catch {
+            if VipleMailAPIClient.isSessionRevokedError(error) {
+                handleRemoteSessionRevoked()
+                return true
+            }
+            showToast(error.localizedDescription)
+            return false
         }
     }
 }

@@ -22,6 +22,7 @@ public struct VipleMailBootstrapResponse: Codable, Sendable {
     public let externalProviderName: String?
     public let isUnifiedInbox: Bool?
     public let isApprovedCenelisAgent: Bool?
+    public let sessionRevoked: Bool?
 }
 
 public struct VipleMailAuthResponse: Codable, Sendable {
@@ -657,6 +658,7 @@ public struct VipleMailNotificationPollResponse: Codable, Sendable {
     public let recentUnseen: [VipleMailNotificationItem]
     public let chatUnreadCount: Int?
     public let apnsServerConfigured: Bool?
+    public let sessionRevoked: Bool?
 }
 
 public struct VipleMailApnsAdminDetails: Codable, Equatable, Sendable {
@@ -876,4 +878,257 @@ public enum MailFilterChip: String, CaseIterable, Identifiable, Sendable {
         case .highPriority: return "exclamationmark.circle.fill"
         }
     }
+}
+
+// MARK: - Gestionnaire d'Appareils Connectés & Sessions Écosystème Cenelis × Viple
+
+public struct VipleConnectedAppBadgeDto: Codable, Identifiable, Equatable, Hashable, Sendable {
+    public let appId: String
+    public let appName: String
+    public let bundleId: String
+    public let icon: String
+    public let colorHex: String
+    public let accountEmail: String
+    public let appVersion: String
+    public let notificationsEnabled: Bool
+    public let lastSeenAtUtc: String?
+
+    public var id: String {
+        "\(appId.lowercased())|\(accountEmail.lowercased())|\(bundleId.lowercased())"
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case appId, appName, bundleId, icon, colorHex, accountEmail, appVersion, notificationsEnabled, lastSeenAtUtc
+    }
+
+    public init(
+        appId: String,
+        appName: String,
+        bundleId: String,
+        icon: String,
+        colorHex: String,
+        accountEmail: String,
+        appVersion: String,
+        notificationsEnabled: Bool,
+        lastSeenAtUtc: String? = nil
+    ) {
+        self.appId = appId
+        self.appName = appName
+        self.bundleId = bundleId
+        self.icon = icon
+        self.colorHex = colorHex
+        self.accountEmail = accountEmail
+        self.appVersion = appVersion
+        self.notificationsEnabled = notificationsEnabled
+        self.lastSeenAtUtc = lastSeenAtUtc
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.appId = (try? c.decode(String.self, forKey: .appId)) ?? "viple-app"
+        self.appName = (try? c.decode(String.self, forKey: .appName)) ?? "Application Viple"
+        self.bundleId = (try? c.decode(String.self, forKey: .bundleId)) ?? ""
+        self.icon = (try? c.decode(String.self, forKey: .icon)) ?? ""
+        self.colorHex = (try? c.decode(String.self, forKey: .colorHex)) ?? "#2563EB"
+        self.accountEmail = (try? c.decode(String.self, forKey: .accountEmail)) ?? ""
+        self.appVersion = (try? c.decode(String.self, forKey: .appVersion)) ?? ""
+        self.notificationsEnabled = (try? c.decode(Bool.self, forKey: .notificationsEnabled)) ?? false
+        self.lastSeenAtUtc = try? c.decode(String.self, forKey: .lastSeenAtUtc)
+    }
+
+    public var resolvedSymbolName: String {
+        let trimmed = icon.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            return trimmed
+        }
+        let lowerId = appId.lowercased()
+        let lowerName = appName.lowercased()
+        if lowerId.contains("mail") || lowerName.contains("mail") {
+            return "envelope.fill"
+        }
+        if lowerId.contains("store") || lowerName.contains("store") {
+            return "book.closed.fill"
+        }
+        if lowerId.contains("social") || lowerName.contains("social") {
+            return "bubble.left.and.bubble.right.fill"
+        }
+        if lowerId.contains("academy") || lowerName.contains("academy") {
+            return "graduationcap.fill"
+        }
+        if lowerId.contains("workspace") || lowerName.contains("workspace") {
+            return "building.columns.fill"
+        }
+        if lowerId.contains("marketplace") || lowerName.contains("marketplace") {
+            return "bag.fill"
+        }
+        return "app.badge.checkmark.fill"
+    }
+
+    public var resolvedColorHex: String {
+        let trimmed = colorHex.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            return trimmed
+        }
+        let lowerId = appId.lowercased()
+        if lowerId.contains("mail") { return "#2563EB" }
+        if lowerId.contains("store") { return "#7C3AED" }
+        if lowerId.contains("social") { return "#DB2777" }
+        if lowerId.contains("academy") { return "#D97706" }
+        return "#0078D4"
+    }
+}
+
+public struct VipleConnectedDeviceDto: Codable, Identifiable, Equatable, Hashable, Sendable {
+    public let deviceId: String
+    public let rawDeviceIds: [String]
+    public let modelName: String
+    public let modelCode: String
+    public let platform: String
+    public let osVersion: String
+    public let isCurrentDevice: Bool
+    public let pushActive: Bool
+    public let connectedAtUtc: String?
+    public let lastSeenAtUtc: String?
+    public var connectedApps: [VipleConnectedAppBadgeDto]
+
+    public var id: String { deviceId }
+
+    enum CodingKeys: String, CodingKey {
+        case deviceId, rawDeviceIds, modelName, modelCode, platform, osVersion
+        case isCurrentDevice, pushActive, connectedAtUtc, lastSeenAtUtc, connectedApps
+    }
+
+    public init(
+        deviceId: String,
+        rawDeviceIds: [String] = [],
+        modelName: String,
+        modelCode: String,
+        platform: String,
+        osVersion: String,
+        isCurrentDevice: Bool,
+        pushActive: Bool,
+        connectedAtUtc: String? = nil,
+        lastSeenAtUtc: String? = nil,
+        connectedApps: [VipleConnectedAppBadgeDto] = []
+    ) {
+        self.deviceId = deviceId
+        self.rawDeviceIds = rawDeviceIds
+        self.modelName = modelName
+        self.modelCode = modelCode
+        self.platform = platform
+        self.osVersion = osVersion
+        self.isCurrentDevice = isCurrentDevice
+        self.pushActive = pushActive
+        self.connectedAtUtc = connectedAtUtc
+        self.lastSeenAtUtc = lastSeenAtUtc
+        self.connectedApps = connectedApps
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.deviceId = (try? c.decode(String.self, forKey: .deviceId)) ?? UUID().uuidString
+        self.rawDeviceIds = (try? c.decode([String].self, forKey: .rawDeviceIds)) ?? []
+        self.modelName = (try? c.decode(String.self, forKey: .modelName)) ?? ""
+        self.modelCode = (try? c.decode(String.self, forKey: .modelCode)) ?? ""
+        self.platform = (try? c.decode(String.self, forKey: .platform)) ?? "iOS"
+        self.osVersion = (try? c.decode(String.self, forKey: .osVersion)) ?? ""
+        self.isCurrentDevice = (try? c.decode(Bool.self, forKey: .isCurrentDevice)) ?? false
+        self.pushActive = (try? c.decode(Bool.self, forKey: .pushActive)) ?? false
+        self.connectedAtUtc = try? c.decode(String.self, forKey: .connectedAtUtc)
+        self.lastSeenAtUtc = try? c.decode(String.self, forKey: .lastSeenAtUtc)
+        self.connectedApps = (try? c.decode([VipleConnectedAppBadgeDto].self, forKey: .connectedApps)) ?? []
+    }
+
+    public var resolvedModelDisplayName: String {
+        let cleanName = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanCode = modelCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        let genericNames: Set<String> = ["", "iphone", "ipad", "ios", "appareil ios", "apple device", "unknown"]
+        if !genericNames.contains(cleanName.lowercased()) {
+            return cleanName
+        }
+        if !cleanCode.isEmpty {
+            return CenelisDeviceIdentity.friendlyModelName(for: cleanCode)
+        }
+        return cleanName.isEmpty ? "Appareil Apple" : cleanName
+    }
+
+    public var resolvedOsDisplayLabel: String {
+        let cleanOs = osVersion.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleanOs.isEmpty {
+            return cleanOs
+        }
+        return platform.isEmpty ? "iOS" : platform
+    }
+
+    public var deviceSymbolName: String {
+        let combined = "\(platform) \(modelCode) \(modelName)".lowercased()
+        if combined.contains("ipad") {
+            return "ipad"
+        }
+        if combined.contains("mac") || combined.contains("desktop") || combined.contains("windows") || combined.contains("linux") || combined.contains("web") {
+            return "desktopcomputer"
+        }
+        return "iphone.gen3"
+    }
+
+    public var formattedRelativeLastSeen: String {
+        guard let raw = lastSeenAtUtc ?? connectedAtUtc, !raw.isEmpty else {
+            return isCurrentDevice ? "Actif maintenant" : "Activité récente"
+        }
+        let iso = ISO8601DateFormatter()
+        let isoFrac = ISO8601DateFormatter()
+        isoFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        guard let date = isoFrac.date(from: raw) ?? iso.date(from: raw) else {
+            return String(raw.prefix(10))
+        }
+        let delta = max(0, Date().timeIntervalSince(date))
+        if delta < 60 {
+            return "À l'instant"
+        }
+        if delta < 3600 {
+            let mins = max(1, Int(delta / 60))
+            return "Il y a \(mins) min"
+        }
+        let cal = Calendar.current
+        if cal.isDateInToday(date) {
+            let hours = max(1, Int(delta / 3600))
+            return "Il y a \(hours) h"
+        }
+        if cal.isDateInYesterday(date) {
+            let tf = DateFormatter()
+            tf.locale = Locale(identifier: "fr_FR")
+            tf.dateFormat = "HH:mm"
+            return "Hier à \(tf.string(from: date))"
+        }
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "fr_FR")
+        df.dateFormat = "d MMM 'à' HH:mm"
+        return df.string(from: date)
+    }
+}
+
+public struct VipleConnectedDevicesResponse: Codable, Sendable {
+    public let ok: Bool
+    public let devices: [VipleConnectedDeviceDto]
+    public let error: String?
+    public let message: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, devices, error, message
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.ok = (try? c.decode(Bool.self, forKey: .ok)) ?? false
+        self.devices = (try? c.decode([VipleConnectedDeviceDto].self, forKey: .devices)) ?? []
+        self.error = try? c.decode(String.self, forKey: .error)
+        self.message = try? c.decode(String.self, forKey: .message)
+    }
+}
+
+public struct VipleDeviceRevokeResponse: Codable, Sendable {
+    public let ok: Bool
+    public let message: String?
+    public let error: String?
+    public let revokedCurrentDevice: Bool?
 }

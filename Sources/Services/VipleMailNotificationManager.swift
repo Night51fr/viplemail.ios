@@ -38,6 +38,15 @@ private enum VipleMailBackgroundRuntime {
     static let processingIdentifier = "com.viplenetwork.viplemail.processing"
 
     static func scheduleAll() {
+        let savedOwner = UserDefaults.standard.string(forKey: "viple.mail.ios.savedOwnerEmail.v1")?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let savedEmail = UserDefaults.standard.string(forKey: "viple.mail.ios.savedEmail.v1")?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !savedOwner.isEmpty || !savedEmail.isEmpty else {
+            BGTaskScheduler.shared.cancelAllTaskRequests()
+            return
+        }
+
         let refreshReq = BGAppRefreshTaskRequest(identifier: refreshIdentifier)
         refreshReq.earliestBeginDate = Date(timeIntervalSinceNow: 35)
         try? BGTaskScheduler.shared.submit(refreshReq)
@@ -47,6 +56,10 @@ private enum VipleMailBackgroundRuntime {
         procReq.requiresExternalPower = false
         procReq.earliestBeginDate = Date(timeIntervalSinceNow: 120)
         try? BGTaskScheduler.shared.submit(procReq)
+    }
+
+    static func cancelAll() {
+        BGTaskScheduler.shared.cancelAllTaskRequests()
     }
 
     static func registerAll() {
@@ -126,6 +139,7 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
     private var foregroundPollingTask: Task<Void, Never>? = nil
     private var backgroundGraceLoopTask: Task<Void, Never>? = nil
     private var isPollInFlight: Bool = false
+    private var pollGeneration: UInt64 = 0
     #if canImport(UIKit)
     private var backgroundGraceTaskId: UIBackgroundTaskIdentifier = .invalid
     #endif
@@ -303,6 +317,43 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
 
     // MARK: - 2. Synchronisation Premier Plan, Fenêtre d'Exécution Arrière-Plan iOS & BGTaskScheduler
 
+    public func syncDevicePushRegistration(
+        email: String? = nil,
+        cid: String? = nil,
+        notificationsEnabled: Bool? = nil,
+        vipOnly: Bool? = nil,
+        promptIfNotDetermined: Bool = false
+    ) async {
+        let explicitOwner = email?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let ownerEmail = (explicitOwner != nil && !explicitOwner!.isEmpty && explicitOwner != "__all__")
+            ? explicitOwner!
+            : resolvedOwnerMailboxEmail()
+        guard !ownerEmail.isEmpty, ownerEmail != "__all__" else { return }
+
+        let resolvedCid = cid ?? attachedViewModel?.currentCid ?? defaults.string(forKey: savedCidKey)
+        let pushEnabled = notificationsEnabled ?? attachedViewModel?.settings.pushNotificationsEnabled ?? true
+        let vipFilter = vipOnly ?? attachedViewModel?.settings.vipNotificationsOnly ?? false
+
+        if pushEnabled {
+            _ = await requestPermissionIfNeeded(promptIfNotDetermined: promptIfNotDetermined)
+        } else {
+            await refreshAuthorizationStatus()
+            if isOsAuthorized {
+                registerForRemoteNotificationsOnSystem()
+            }
+        }
+
+        await VipleMailAPIClient.shared.registerDeviceForPush(
+            email: ownerEmail,
+            cid: resolvedCid,
+            apnsToken: apnsDeviceTokenHex,
+            notificationsEnabled: pushEnabled,
+            vipOnly: vipFilter
+        )
+    }
+
     public func enterForegroundMode() {
         endBackgroundGraceExecution()
         startForegroundSyncLoop()
@@ -312,20 +363,12 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
             if isOsAuthorized {
                 registerForRemoteNotificationsOnSystem()
             }
-            if let hex = apnsDeviceTokenHex, !hex.isEmpty {
-                let ownerEmail = resolvedOwnerMailboxEmail()
-                let cid = attachedViewModel?.currentCid ?? defaults.string(forKey: savedCidKey)
-                let pushEnabled = attachedViewModel?.settings.pushNotificationsEnabled ?? true
-                let vipOnly = attachedViewModel?.settings.vipNotificationsOnly ?? false
-                if !ownerEmail.isEmpty {
-                    await VipleMailAPIClient.shared.registerDeviceForPush(
-                        email: ownerEmail,
-                        cid: cid,
-                        apnsToken: hex,
-                        notificationsEnabled: pushEnabled,
-                        vipOnly: vipOnly
-                    )
-                }
+            let ownerEmail = resolvedOwnerMailboxEmail()
+            if !ownerEmail.isEmpty {
+                await syncDevicePushRegistration(
+                    email: ownerEmail,
+                    promptIfNotDetermined: false
+                )
             }
             await refreshServerApnsStatus()
         }
@@ -647,6 +690,7 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
         }
 
         guard !ownerEmail.isEmpty else { return true }
+        let cycleGen = self.pollGeneration
 
         #if canImport(UIKit)
         let effectiveBackground = isBackground || UIApplication.shared.applicationState != .active
@@ -662,6 +706,11 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
                 allMailboxes: true,
                 fastBackground: effectiveBackground
             )
+            guard self.pollGeneration == cycleGen else { return false }
+            if poll.sessionRevoked == true {
+                await handleRemoteRevocationDetected(ownerEmail: ownerEmail, cid: cid)
+                return false
+            }
             guard poll.ok else { return false }
 
             self.lastBackgroundSyncDate = Date()
@@ -775,6 +824,9 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
 
             return true
         } catch {
+            if VipleMailAPIClient.isSessionRevokedError(error) {
+                await handleRemoteRevocationDetected(ownerEmail: ownerEmail, cid: cid)
+            }
             return false
         }
     }
@@ -866,13 +918,46 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
         try? await UNUserNotificationCenter.current().setBadgeCount(safeCount)
     }
 
-    public func clearNotificationsOnSignOut(email: String?) async {
+    /// Purge synchrone immédiate (0 ms) des clés persistées et arrêt complet des boucles de sondage
+    /// afin qu'aucune tâche `BGAppRefreshTask`, `BGProcessingTask` ou cycle en cours ne puisse poller l'ancien compte.
+    public func purgePersistedSessionAndStopSyncImmediately() {
+        pollGeneration &+= 1
         stopForegroundSyncLoop()
         endBackgroundGraceExecution()
-        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+        #if canImport(UIKit)
+        VipleMailBackgroundRuntime.cancelAll()
+        #endif
+        defaults.removeObject(forKey: savedEmailKey)
+        defaults.removeObject(forKey: savedOwnerEmailKey)
+        defaults.removeObject(forKey: savedCidKey)
+        defaults.removeObject(forKey: savedTokenKey)
+        defaults.removeObject(forKey: "viple.mail.ios.pendingOpenMsgId")
+        UserDefaults(suiteName: "group.store.livria.shared")?.removeObject(forKey: "viple.crossapp.mail.account")
+        UserDefaults(suiteName: "group.com.viplenetwork.shared")?.removeObject(forKey: "viple.crossapp.mail.account")
         UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+    }
+
+    public func handleUserSignedOut(previousEmail: String?, previousCid: String?) async {
+        purgePersistedSessionAndStopSyncImmediately()
         try? await UNUserNotificationCenter.current().setBadgeCount(0)
-        await VipleMailAPIClient.shared.unregisterDeviceForPush(email: email)
+        await VipleMailAPIClient.shared.unregisterDeviceForPush(
+            email: previousEmail,
+            cid: previousCid
+        )
+    }
+
+    public func clearNotificationsOnSignOut(email: String?) async {
+        await handleUserSignedOut(previousEmail: email, previousCid: nil)
+    }
+
+    private func handleRemoteRevocationDetected(ownerEmail: String, cid: String?) async {
+        if let vm = attachedViewModel {
+            vm.handleRemoteSessionRevoked()
+        } else {
+            VipleMailAPIClient.shared.authToken = nil
+            await handleUserSignedOut(previousEmail: ownerEmail, previousCid: cid)
+        }
     }
 
     // MARK: - 4. Génération d'Avatar Riche Ultra-Rapide (0 ms Réseau en Arrière-Plan)

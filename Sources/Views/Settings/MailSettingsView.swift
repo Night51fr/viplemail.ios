@@ -17,6 +17,7 @@ public struct MailSettingsView: View {
     @State private var cenelisCustomHandleField: String = ""
     @State private var isEditingCenelisHandle: Bool = false
     @State private var accountPendingDeletion: ExternalMailAccount? = nil
+    @State private var isShowingConnectedDevicesSheet: Bool = false
 
     // Configuration Serveur Push Apple APNs (.p8) pour administrateurs / agents Cenelis
     @State private var isApnsConfigExpanded: Bool = false
@@ -35,6 +36,7 @@ public struct MailSettingsView: View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 18) {
                 accountProfileCard
+                connectedDevicesEntryCard
                 if vm.isApprovedCenelisAgent {
                     cenelisAgentMailboxCard
                 }
@@ -100,6 +102,11 @@ public struct MailSettingsView: View {
                 vm.showToast(err.localizedDescription)
             }
         }
+        .sheet(isPresented: $isShowingConnectedDevicesSheet) {
+            ConnectedDevicesManagerView()
+                .environmentObject(vm)
+                .preferredColorScheme(vm.preferredColorSchemeOverride)
+        }
         .onAppear {
             displayNameField = vm.currentUser?.displayName ?? ""
             personalMessageField = vm.currentUser?.personalMessage ?? ""
@@ -107,6 +114,7 @@ public struct MailSettingsView: View {
             Task {
                 await notifManager.refreshAuthorizationStatus()
                 await notifManager.refreshServerApnsStatus()
+                await vm.refreshConnectedDevices(silent: true)
                 if let details = notifManager.apnsStatusDetails?.apns {
                     if !details.teamId.isEmpty { apnsTeamIdField = details.teamId }
                     if !details.keyId.isEmpty { apnsKeyIdField = details.keyId }
@@ -115,6 +123,112 @@ public struct MailSettingsView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Carte Proéminente « Appareils connectés & Sessions actives »
+
+    private var connectedDevicesEntryCard: some View {
+        let localModel = CenelisDeviceIdentity.friendlyModelName()
+        let localOs = CenelisDeviceIdentity.osVersionString()
+        let localSymbol = CenelisDeviceIdentity.currentDeviceSymbolName()
+        let activeCount = max(1, vm.connectedDevices.count)
+
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Label("Appareils connectés & Sessions actives", systemImage: "lock.iphone")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(VipleMailPalette.ink)
+                    .lineLimit(1)
+
+                Spacer(minLength: 4)
+
+                Text("\(activeCount) ACTIF\(activeCount > 1 ? "S" : "")")
+                    .font(.system(size: 10, weight: .black, design: .rounded))
+                    .foregroundStyle(VipleMailPalette.success)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 3.5)
+                    .background(Capsule().fill(VipleMailPalette.success.opacity(0.14)))
+            }
+
+            Text("Visualisez les iPhone, iPad et ordinateurs reliés à votre identifiant à travers Viple Mail, Livria Store, Livria Social et Cenelis Academy, et coupez instantanément l'accès ou les notifications à distance.")
+                .font(.system(size: 12.5))
+                .foregroundStyle(VipleMailPalette.inkSecondary)
+
+            Button {
+                isShowingConnectedDevicesSheet = true
+            } label: {
+                HStack(spacing: 12) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(VipleMailPalette.success.opacity(colorScheme == .dark ? 0.18 : 0.12))
+                            .frame(width: 42, height: 42)
+                        Image(systemName: localSymbol)
+                            .font(.system(size: 19, weight: .bold))
+                            .foregroundStyle(VipleMailPalette.success)
+                    }
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(localModel)
+                                .font(.system(size: 14.5, weight: .black, design: .rounded))
+                                .foregroundStyle(VipleMailPalette.ink)
+                                .lineLimit(1)
+
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(VipleMailPalette.success)
+                                    .frame(width: 5.5, height: 5.5)
+                                Text("Cet appareil")
+                                    .font(.system(size: 10, weight: .black, design: .rounded))
+                                    .foregroundStyle(VipleMailPalette.success)
+                            }
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2.5)
+                            .background(Capsule().fill(VipleMailPalette.success.opacity(0.14)))
+                        }
+
+                        Text("\(localOs) • Push exclusif rattaché à \(vm.primaryHostedEmail.isEmpty ? vm.currentEmail : vm.primaryHostedEmail)")
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(VipleMailPalette.inkMuted)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 4)
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(VipleMailPalette.primary)
+                }
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(VipleMailPalette.surfaceSubtle)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(VipleMailPalette.success.opacity(0.32), lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                isShowingConnectedDevicesSheet = true
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "iphone.gen3.radiowaves.left.and.right")
+                    Text("Ouvrir le gestionnaire d'appareils (\(activeCount))")
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .fill(VipleMailPalette.heroGradient)
+                )
+            }
+        }
+        .vipleMailCard(cornerRadius: 20, padding: 16)
     }
 
     // MARK: - Carte Profil Viple Live ID
@@ -1040,8 +1154,10 @@ public struct MailSettingsView: View {
                         placeholder: configured
                             ? "Laissez vide pour conserver la clé .p8 actuelle, ou collez -----BEGIN PRIVATE KEY----- …"
                             : "-----BEGIN PRIVATE KEY-----\nCollez ici le contenu de votre fichier Apple AuthKey_XXXXXX.p8\n-----END PRIVATE KEY-----",
+                        fontSize: 11.5,
                         minHeight: 84,
-                        font: .monospacedSystemFont(ofSize: 11.5, weight: .regular)
+                        horizontalInset: 10,
+                        verticalInset: 8
                     )
                     .padding(6)
                     .background(RoundedRectangle(cornerRadius: 10).fill(VipleMailPalette.resolvedSurface(for: colorScheme)))
