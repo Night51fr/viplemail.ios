@@ -186,6 +186,10 @@ public enum VipleMailPalette {
         light: (0.839, 0.890, 0.961, 1.0),  // #D6E3F5
         dark:  (0.580, 0.702, 0.890, 0.17)  // Liseré verre lumineux subtil en mode sombre
     )
+    public static let borderStrong = dynamicColor(
+        light: (0.682, 0.769, 0.890, 1.0),  // #AEC4E3 Bordure contrastée (pastilles PIN, contours actifs)
+        dark:  (0.580, 0.702, 0.890, 0.36)  // Liseré verre renforcé en mode sombre OLED
+    )
 
     // Typographie haute lisibilité WCAG AAA
     public static let ink = dynamicColor(
