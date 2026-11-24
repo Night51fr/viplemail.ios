@@ -95,6 +95,19 @@ public final class VipleMailViewModel: ObservableObject {
     @Published public var isCreatingIMessageLink: Bool = false
     @Published public var isProcessingGuestAction: Bool = false
 
+    // Amis Viple Live ID, Appels Viple Visio (Classique Audio & Visio), Agenda #viplecalandar & Aide Cenelis Academy
+    @Published public var friends: [VipleFriend] = []
+    @Published public var peerStatusCache: [String: VipleLiveIdPeerStatus] = [:]
+    @Published public var agendaEvents: [VipleAgendaEvent] = []
+    @Published public var importedCalendarMessageKeys: Set<String> = []
+    @Published public var incomingVisioCall: VipleVisioCall? = nil
+    @Published public var outgoingVisioCall: VipleVisioCall? = nil
+    @Published public var activeVisioRoomSession: VipleVisioRoomPresentation? = nil
+    @Published public var isShowingAcademyHelp: Bool = false
+    @Published public var isShowingCreateAgendaSheet: Bool = false
+    @Published public var createAgendaDefaultVisio: Bool = false
+    private var visioSignalingLoopTask: Task<Void, Never>? = nil
+
     // Apparence & Mode Sombre (Automatique iOS / Clair / Sombre OLED + Rendu adaptatif des e-mails HTML)
     @Published public var appearanceMode: VipleMailAppearanceMode = .system {
         didSet {
@@ -574,6 +587,18 @@ public final class VipleMailViewModel: ObservableObject {
                 if let srvChats = res.chatSessions {
                     self.chatSessions = srvChats
                 }
+                if let srvFriends = res.friends {
+                    self.friends = srvFriends
+                }
+                if let srvAgenda = res.agendaEvents {
+                    self.agendaEvents = srvAgenda
+                }
+                if let srvCall = res.activeIncomingCall,
+                   self.activeVisioRoomSession == nil,
+                   self.incomingVisioCall?.callId != srvCall.callId {
+                    self.incomingVisioCall = srvCall
+                }
+                startVisioSignalingLoopIfNeeded()
                 if let srvChatUnread = res.chatUnreadCount {
                     self.chatUnreadCount = srvChatUnread
                 } else {
@@ -1021,6 +1046,7 @@ public final class VipleMailViewModel: ObservableObject {
         let previousCid = currentUser?.cid ?? defaults.string(forKey: savedCidKey)
 
         // 2. Arrêt synchrone immédiat du polling et purge des clés background UserDefaults
+        stopVisioSignalingLoop()
         VipleMailNotificationManager.shared.purgePersistedSessionAndStopSyncImmediately()
         defaults.removeObject(forKey: savedEmailKey)
         defaults.removeObject(forKey: savedOwnerEmailKey)
@@ -1054,6 +1080,13 @@ public final class VipleMailViewModel: ObservableObject {
         folders = []
         messages = []
         contacts = []
+        friends = []
+        peerStatusCache = [:]
+        agendaEvents = []
+        incomingVisioCall = nil
+        outgoingVisioCall = nil
+        activeVisioRoomSession = nil
+        isShowingAcademyHelp = false
         chatSessions = []
         chatUnreadCount = 0
         openedMessage = nil
@@ -2537,6 +2570,339 @@ public final class VipleMailViewModel: ObservableObject {
             self.activeThreadMessages = [msg]
             self.openMessage(msg)
             showToast("✉️ Courrier ouvert directement depuis iMessage")
+        } catch {
+            showToast(error.localizedDescription)
+        }
+    }
+
+    // MARK: - 12. Amis Viple Live ID, Appels Viple Visio (Audio & Vidéo) & Agenda #viplecalandar
+
+    public var acceptedFriends: [VipleFriend] {
+        friends.filter { $0.isAccepted }
+    }
+
+    public var incomingFriendRequests: [VipleFriend] {
+        friends.filter { $0.isIncomingRequest }
+    }
+
+    public var outgoingFriendRequests: [VipleFriend] {
+        friends.filter { $0.isOutgoingRequest }
+    }
+
+    public func friendshipForEmail(_ rawEmail: String) -> VipleFriend? {
+        let clean = rawEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !clean.isEmpty else { return nil }
+        return friends.first { $0.allKnownEmails.contains(clean) }
+    }
+
+    public func isMutualFriend(_ rawEmail: String) -> Bool {
+        friendshipForEmail(rawEmail)?.isAccepted == true
+    }
+
+    public func ensurePeerVipleLiveStatusLoaded(_ rawEmail: String) async {
+        let clean = rawEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !clean.isEmpty, clean.contains("@") else { return }
+        let owner = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
+        guard !owner.isEmpty, owner != "__all__" else { return }
+        if clean == owner.lowercased() { return }
+        if peerStatusCache[clean] != nil { return }
+
+        do {
+            let status = try await VipleMailAPIClient.shared.lookupVipleLiveIdPeer(
+                email: owner,
+                cid: currentCid,
+                targetEmail: clean
+            )
+            peerStatusCache[clean] = status
+        } catch { }
+    }
+
+    public func requestAddVipleFriend(_ rawTargetEmail: String) async {
+        let clean = rawTargetEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !clean.isEmpty else { return }
+        let owner = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
+        guard !owner.isEmpty, owner != "__all__" else { return }
+
+        do {
+            let res = try await VipleMailAPIClient.shared.sendFriendRequest(
+                email: owner,
+                cid: currentCid,
+                targetEmail: clean
+            )
+            if res.ok {
+                if let list = res.friends {
+                    self.friends = list
+                }
+                peerStatusCache.removeValue(forKey: clean)
+                await ensurePeerVipleLiveStatusLoaded(clean)
+                showToast(res.message ?? "Demande d'ami envoyée !")
+            } else {
+                showToast(res.error ?? "Impossible d'envoyer la demande d'ami.")
+            }
+        } catch {
+            showToast(error.localizedDescription)
+        }
+    }
+
+    public func respondToFriendRequest(_ friend: VipleFriend, action: String) async {
+        let owner = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
+        guard !owner.isEmpty, owner != "__all__" else { return }
+
+        do {
+            let res = try await VipleMailAPIClient.shared.respondToFriendRequest(
+                email: owner,
+                cid: currentCid,
+                friendshipId: friend.friendshipId,
+                action: action
+            )
+            if res.ok {
+                if let list = res.friends {
+                    self.friends = list
+                }
+                for addr in friend.allKnownEmails {
+                    peerStatusCache.removeValue(forKey: addr)
+                }
+                showToast(res.message ?? "Liste d'amis mise à jour.")
+            } else {
+                showToast(res.error ?? "Action impossible.")
+            }
+        } catch {
+            showToast(error.localizedDescription)
+        }
+    }
+
+    public func startVisioCall(to targetEmail: String, peerDisplayName: String, audioOnly: Bool) async {
+        let owner = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
+        guard !owner.isEmpty, owner != "__all__" else { return }
+
+        do {
+            let res = try await VipleMailAPIClient.shared.startDirectVisioCall(
+                email: owner,
+                cid: currentCid,
+                targetEmail: targetEmail,
+                mode: audioOnly ? "audio" : "video"
+            )
+            guard res.ok, let call = res.call else {
+                showToast(res.error ?? "Cet utilisateur doit vous ajouter en ami avant de pouvoir l'appeler.")
+                return
+            }
+            self.outgoingVisioCall = call
+            startVisioSignalingLoopIfNeeded()
+        } catch {
+            showToast(error.localizedDescription)
+        }
+    }
+
+    public func answerIncomingVisioCall(_ call: VipleVisioCall) async {
+        let owner = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
+        self.incomingVisioCall = nil
+        do {
+            let res = try await VipleMailAPIClient.shared.respondToVisioCall(
+                email: owner,
+                cid: currentCid,
+                callId: call.callId,
+                action: "accept"
+            )
+            let effective = res.call ?? call
+            self.activeVisioRoomSession = VipleVisioRoomPresentation(
+                id: effective.callId,
+                title: effective.modeLabel,
+                peerName: effective.callerName,
+                joinUrl: effective.joinUrl,
+                isAudioOnly: effective.isAudioOnly,
+                activeCallId: effective.callId
+            )
+        } catch {
+            self.activeVisioRoomSession = VipleVisioRoomPresentation(
+                id: call.callId,
+                title: call.modeLabel,
+                peerName: call.callerName,
+                joinUrl: call.joinUrl,
+                isAudioOnly: call.isAudioOnly,
+                activeCallId: call.callId
+            )
+        }
+    }
+
+    public func declineOrEndVisioCall(_ call: VipleVisioCall, action: String = "decline") async {
+        let owner = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
+        if incomingVisioCall?.callId == call.callId {
+            incomingVisioCall = nil
+        }
+        if outgoingVisioCall?.callId == call.callId {
+            outgoingVisioCall = nil
+        }
+        if activeVisioRoomSession?.activeCallId == call.callId {
+            activeVisioRoomSession = nil
+        }
+        _ = try? await VipleMailAPIClient.shared.respondToVisioCall(
+            email: owner,
+            cid: currentCid,
+            callId: call.callId,
+            action: action
+        )
+    }
+
+    public func closeActiveVisioRoom() async {
+        if let active = activeVisioRoomSession {
+            activeVisioRoomSession = nil
+            if let cidCall = active.activeCallId {
+                let owner = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
+                _ = try? await VipleMailAPIClient.shared.respondToVisioCall(
+                    email: owner,
+                    cid: currentCid,
+                    callId: cidCall,
+                    action: "hangup"
+                )
+            }
+        }
+    }
+
+    public func openAgendaVisioRoom(_ event: VipleAgendaEvent, audioOnly: Bool = false) {
+        let baseJoin = event.visioJoinUrl ?? event.visioGuestJoinUrl ?? ""
+        guard !baseJoin.isEmpty else { return }
+        var finalUrl = baseJoin
+        if !finalUrl.contains("embed=") {
+            finalUrl += (finalUrl.contains("?") ? "&" : "?") + "nosso=1&embed=1&autojoin=1"
+        }
+        if audioOnly && !finalUrl.contains("audioOnly=") {
+            finalUrl += "&audioOnly=1"
+        }
+        if let myName = currentUser?.displayName, !finalUrl.contains("name=") {
+            let enc = myName.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? myName
+            finalUrl += "&name=\(enc)"
+        }
+        self.activeVisioRoomSession = VipleVisioRoomPresentation(
+            id: event.eventId,
+            title: event.title,
+            peerName: "Salon Viple Visio",
+            joinUrl: finalUrl,
+            isAudioOnly: audioOnly,
+            activeCallId: nil
+        )
+    }
+
+    public func startVisioSignalingLoopIfNeeded() {
+        guard visioSignalingLoopTask == nil, isAuthenticated else { return }
+        visioSignalingLoopTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self, self.isAuthenticated else { break }
+                let fastPoll = (self.outgoingVisioCall != nil || self.incomingVisioCall != nil)
+                try? await Task.sleep(nanoseconds: fastPoll ? 1_500_000_000 : 3_800_000_000)
+                if Task.isCancelled { break }
+                await self.pollVisioSignalingOnce()
+            }
+        }
+    }
+
+    public func stopVisioSignalingLoop() {
+        visioSignalingLoopTask?.cancel()
+        visioSignalingLoopTask = nil
+    }
+
+    private func pollVisioSignalingOnce() async {
+        let owner = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
+        guard !owner.isEmpty, owner != "__all__" else { return }
+        let trackedId = outgoingVisioCall?.callId ?? incomingVisioCall?.callId
+
+        guard let res = try? await VipleMailAPIClient.shared.fetchActiveVisioCalls(
+            email: owner,
+            cid: currentCid,
+            trackedCallId: trackedId
+        ), res.ok else { return }
+
+        if let inc = res.incomingCall, activeVisioRoomSession == nil, outgoingVisioCall == nil {
+            if incomingVisioCall?.callId != inc.callId {
+                incomingVisioCall = inc
+            }
+        } else if incomingVisioCall != nil, res.incomingCall == nil {
+            incomingVisioCall = nil
+        }
+
+        if let currentOut = outgoingVisioCall, let tracked = res.trackedCall, tracked.callId == currentOut.callId {
+            let st = tracked.status.lowercased()
+            if st == "accepted" {
+                outgoingVisioCall = nil
+                activeVisioRoomSession = VipleVisioRoomPresentation(
+                    id: tracked.callId,
+                    title: tracked.modeLabel,
+                    peerName: tracked.calleeName,
+                    joinUrl: tracked.joinUrl,
+                    isAudioOnly: tracked.isAudioOnly,
+                    activeCallId: tracked.callId
+                )
+            } else if st == "declined" {
+                outgoingVisioCall = nil
+                showToast("\(tracked.calleeName) est occupé(e) et a décliné l'appel.")
+            } else if st == "ended" || st == "missed" {
+                outgoingVisioCall = nil
+                if st == "missed" {
+                    showToast("\(tracked.calleeName) n'a pas répondu.")
+                }
+            }
+        }
+    }
+
+    // MARK: - Actions Agenda & #viplecalandar
+
+    public func refreshAgendaAndFriends() async {
+        let owner = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
+        guard !owner.isEmpty, owner != "__all__" else { return }
+        if let fRes = try? await VipleMailAPIClient.shared.fetchFriends(email: owner, cid: currentCid),
+           let list = fRes.friends {
+            self.friends = list
+        }
+        if let aRes = try? await VipleMailAPIClient.shared.fetchAgendaEvents(email: owner, cid: currentCid),
+           let evs = aRes.events {
+            self.agendaEvents = evs
+        }
+    }
+
+    public func isInviteAlreadyInAgenda(_ invite: ParsedVipleCalendarInvite) -> Bool {
+        if importedCalendarMessageKeys.contains(invite.id) { return true }
+        if let src = invite.sourceMessageId, !src.isEmpty,
+           agendaEvents.contains(where: { $0.sourceMessageId == src }) {
+            return true
+        }
+        return false
+    }
+
+    public func addParsedMailInviteToAgenda(_ invite: ParsedVipleCalendarInvite) async {
+        let owner = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
+        guard !owner.isEmpty, owner != "__all__" else { return }
+        do {
+            let res = try await VipleMailAPIClient.shared.importCalendarInviteFromMail(
+                email: owner,
+                cid: currentCid,
+                invite: invite
+            )
+            if res.ok {
+                importedCalendarMessageKeys.insert(invite.id)
+                if let evs = res.events {
+                    self.agendaEvents = evs
+                }
+                showToast(res.message ?? "📅 Rendez-vous ajouté à votre Agenda !")
+            } else {
+                showToast(res.error ?? "Impossible d'ajouter ce rendez-vous.")
+            }
+        } catch {
+            showToast(error.localizedDescription)
+        }
+    }
+
+    public func deleteAgendaEvent(_ event: VipleAgendaEvent) async {
+        let owner = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
+        guard !owner.isEmpty, owner != "__all__" else { return }
+        do {
+            let res = try await VipleMailAPIClient.shared.deleteAgendaEvent(
+                email: owner,
+                cid: currentCid,
+                eventId: event.eventId
+            )
+            if res.ok, let evs = res.events {
+                self.agendaEvents = evs
+                showToast("Rendez-vous supprimé de l'Agenda.")
+            }
         } catch {
             showToast(error.localizedDescription)
         }

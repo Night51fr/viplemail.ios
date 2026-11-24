@@ -39,6 +39,7 @@ public struct MailSettingsView: View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 18) {
                 accountProfileCard
+                academyEmbeddedHelpCard
                 guestAccessAndIMessageCard
                 connectedDevicesEntryCard
                 if vm.isApprovedCenelisAgent {
@@ -138,6 +139,48 @@ public struct MailSettingsView: View {
     }
 
     // MARK: - Carte « Accès Invité Temporaire (1h, 8h, 24h, 48h) & iMessage »
+
+    private var academyEmbeddedHelpCard: some View {
+        Button {
+            vm.isShowingAcademyHelp = true
+        } label: {
+            HStack(spacing: 14) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color(red: 0.078, green: 0.325, blue: 0.275))
+                        .frame(width: 48, height: 48)
+                    Image(systemName: "graduationcap.fill")
+                        .font(.system(size: 21, weight: .bold))
+                        .foregroundStyle(Color(red: 0.945, green: 0.733, blue: 0.212))
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text("Aide & Cours Cenelis Academy")
+                            .font(.system(size: 15, weight: .black, design: .rounded))
+                            .foregroundStyle(VipleMailPalette.ink)
+                        Text("NOUVEAU")
+                            .font(.system(size: 9, weight: .black, design: .rounded))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Color(red: 0.722, green: 0.365, blue: 0.098)))
+                    }
+                    Text("« Bienvenue sur Viple Mail, Visio, MailRTE » — parcours interactif intégré")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(VipleMailPalette.inkSecondary)
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(VipleMailPalette.inkMuted)
+            }
+            .vipleMailCard(cornerRadius: 18, padding: 14)
+        }
+    }
 
     private var guestAccessAndIMessageCard: some View {
         let activeOutCount = vm.outgoingGuestGrants.count

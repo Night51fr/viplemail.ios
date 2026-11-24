@@ -27,6 +27,9 @@ public struct VipleMailBootstrapResponse: Codable, Sendable {
     public let outgoingGuestGrants: [GuestMailboxGrant]?
     public let isGuestMailbox: Bool?
     public let activeGuestGrant: GuestMailboxGrant?
+    public let friends: [VipleFriend]?
+    public let agendaEvents: [VipleAgendaEvent]?
+    public let activeIncomingCall: VipleVisioCall?
 }
 
 public struct VipleMailAuthResponse: Codable, Sendable {
@@ -684,6 +687,8 @@ public struct VipleMailNotificationPollResponse: Codable, Sendable {
     public let chatUnreadCount: Int?
     public let apnsServerConfigured: Bool?
     public let sessionRevoked: Bool?
+    public var activeIncomingCall: VipleVisioCall? = nil
+    public var pendingFriendRequestsCount: Int? = nil
 }
 
 public struct VipleMailApnsAdminDetails: Codable, Equatable, Sendable {

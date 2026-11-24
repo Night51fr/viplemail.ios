@@ -244,6 +244,20 @@ public struct SecureMailReaderView: View {
 
                 Divider()
 
+                let mrteInvites = VipleCalendarParser.extractInvites(
+                    fromPlain: session.bodyText,
+                    html: session.bodyText,
+                    defaultTitle: session.subjectText,
+                    organizerEmail: session.senderEmail,
+                    organizerName: session.senderEmail,
+                    messageId: session.mailId
+                )
+                if !mrteInvites.isEmpty {
+                    ForEach(mrteInvites) { inv in
+                        VipleCalendarMailInviteCardView(invite: inv)
+                    }
+                }
+
                 // Corps du message (sélection/copie désactivée si politique DLP active)
                 if session.dlpPolicy.preventCopy {
                     Text(Self.stripBasicHtmlIfNeeded(session.bodyText))

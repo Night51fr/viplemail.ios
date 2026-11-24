@@ -17,9 +17,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>2026.11.21</string>
+	<string>2026.11.22</string>
 	<key>CFBundleVersion</key>
-	<string>21</string>
+	<string>22</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -56,7 +56,9 @@
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Viple Mail enregistre dans votre photothèque les images reçues en pièce jointe lorsque vous le demandez.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Viple Mail utilise l'appareil photo pour photographier un document et l'ajouter en pièce jointe à votre courrier.</string>
+	<string>Viple Mail utilise l'appareil photo pour vos appels vidéo Viple Visio et pour photographier un document en pièce jointe.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Viple Mail utilise le microphone pour vos appels vocaux classiques et vos visioconférences Viple Visio.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

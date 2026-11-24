@@ -7,6 +7,9 @@ public struct MailContactsView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var searchText: String = ""
     @State private var vipOnlyFilter: Bool = false
+    @State private var sectionFilter: Int = 0 // 0: Tous (Amis + Contacts), 1: Amis Viple Live, 2: Contacts
+    @State private var isShowingAddFriendSheet: Bool = false
+    @State private var addFriendHandleOrEmail: String = ""
 
     // Création / Édition d'un contact
     @State private var editingContactId: String? = nil
@@ -38,45 +41,329 @@ public struct MailContactsView: View {
         return list
     }
 
+    private var filteredAcceptedFriends: [VipleFriend] {
+        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return vm.acceptedFriends }
+        return vm.acceptedFriends.filter {
+            $0.displayName.lowercased().contains(q) || $0.email.lowercased().contains(q)
+        }
+    }
+
     public var body: some View {
         VStack(spacing: 0) {
             contactsHeader
 
-            if filteredContacts.isEmpty {
-                emptyContactsView
-            } else {
-                ScrollView(showsIndicators: false) {
-                    LazyVStack(spacing: 10) {
-                        ForEach(filteredContacts) { contact in
-                            contactCard(contact)
-                        }
+            ScrollView(showsIndicators: false) {
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    if sectionFilter == 0 || sectionFilter == 1 {
+                        friendsSectionView
                     }
-                    .padding(16)
+                    if sectionFilter == 0 || sectionFilter == 2 {
+                        contactsSectionView
+                    }
                 }
+                .padding(16)
+                .padding(.bottom, 24)
             }
         }
         .background(VipleMailPalette.background)
         .navigationBarHidden(true)
+        .task {
+            await vm.refreshAgendaAndFriends()
+        }
         .sheet(isPresented: $vm.isShowingAddContactSheet) {
             addOrEditContactSheet
         }
+        .sheet(isPresented: $isShowingAddFriendSheet) {
+            addVipleFriendSheet
+        }
+    }
+
+    private var friendsSectionView: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Amis Viple Live ID", systemImage: "person.2.wave.2.fill")
+                    .font(.system(size: 16, weight: .black, design: .rounded))
+                    .foregroundStyle(VipleMailPalette.ink)
+                Spacer()
+                Button {
+                    addFriendHandleOrEmail = ""
+                    isShowingAddFriendSheet = true
+                } label: {
+                    Label("Ajouter un ami", systemImage: "person.badge.plus")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundStyle(VipleMailPalette.primary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(VipleMailPalette.primary.opacity(0.12)))
+                }
+            }
+
+            if !vm.incomingFriendRequests.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("DEMANDES D'AMIS REÇUES (\(vm.incomingFriendRequests.count))")
+                        .font(.system(size: 10.5, weight: .black, design: .rounded))
+                        .foregroundStyle(VipleMailPalette.warning)
+                    ForEach(vm.incomingFriendRequests) { req in
+                        HStack(spacing: 12) {
+                            VipleMailAvatarView(name: req.displayName, email: req.email, avatarUrl: req.avatarUrl, size: 42)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(req.displayName)
+                                    .font(.system(size: 14.5, weight: .bold, design: .rounded))
+                                    .foregroundStyle(VipleMailPalette.ink)
+                                Text(req.email)
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(VipleMailPalette.primary)
+                            }
+                            Spacer()
+                            Button {
+                                Task { await vm.respondToFriendRequest(req, action: "accept") }
+                            } label: {
+                                Text("Accepter")
+                                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 11)
+                                    .padding(.vertical, 7)
+                                    .background(Capsule().fill(VipleMailPalette.success))
+                            }
+                            Button {
+                                Task { await vm.respondToFriendRequest(req, action: "decline") }
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(VipleMailPalette.danger)
+                                    .frame(width: 30, height: 30)
+                                    .background(Circle().fill(VipleMailPalette.danger.opacity(0.12)))
+                            }
+                        }
+                        .vipleMailCard(cornerRadius: 16, padding: 12)
+                    }
+                }
+            }
+
+            if filteredAcceptedFriends.isEmpty {
+                HStack(spacing: 12) {
+                    Image(systemName: "video.badge.checkmark")
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundStyle(VipleMailPalette.indigo)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Aucun ami Viple Live ID accepté")
+                            .font(.system(size: 13.5, weight: .bold, design: .rounded))
+                            .foregroundStyle(VipleMailPalette.ink)
+                        Text("Ajoutez un membre Viple Live ID (ici, dans un mail ou dans un chat via « ... »). Une fois accepté, appelez-le en audio ou en Viple Visio !")
+                            .font(.system(size: 12))
+                            .foregroundStyle(VipleMailPalette.inkSecondary)
+                    }
+                }
+                .vipleMailCard(cornerRadius: 16, padding: 14)
+            } else {
+                ForEach(filteredAcceptedFriends) { friend in
+                    friendCard(friend)
+                }
+            }
+
+            if !vm.outgoingFriendRequests.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("EN ATTENTE D'ACCEPTATION (\(vm.outgoingFriendRequests.count))")
+                        .font(.system(size: 10.5, weight: .black, design: .rounded))
+                        .foregroundStyle(VipleMailPalette.inkMuted)
+                    ForEach(vm.outgoingFriendRequests) { outReq in
+                        HStack(spacing: 10) {
+                            VipleMailAvatarView(name: outReq.displayName, email: outReq.email, avatarUrl: outReq.avatarUrl, size: 34)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(outReq.displayName)
+                                    .font(.system(size: 13.5, weight: .bold, design: .rounded))
+                                    .foregroundStyle(VipleMailPalette.ink)
+                                Text("Doit accepter votre ajout avant les appels Viple Visio")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(VipleMailPalette.inkMuted)
+                            }
+                            Spacer()
+                            Button("Annuler") {
+                                Task { await vm.respondToFriendRequest(outReq, action: "cancel") }
+                            }
+                            .font(.system(size: 11.5, weight: .bold))
+                            .foregroundStyle(VipleMailPalette.danger)
+                        }
+                        .vipleMailCard(cornerRadius: 14, padding: 11)
+                    }
+                }
+            }
+        }
+    }
+
+    private func friendCard(_ friend: VipleFriend) -> some View {
+        HStack(spacing: 12) {
+            VipleMailAvatarView(
+                name: friend.displayName,
+                email: friend.email,
+                avatarUrl: friend.avatarUrl,
+                size: 46,
+                isVip: true
+            )
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(friend.displayName)
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundStyle(VipleMailPalette.ink)
+                    Text("AMI")
+                        .font(.system(size: 9, weight: .black, design: .rounded))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(VipleMailPalette.success))
+                }
+                Text(friend.email)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(VipleMailPalette.primary)
+            }
+
+            Spacer()
+
+            HStack(spacing: 7) {
+                Button {
+                    Task {
+                        await vm.startVisioCall(to: friend.email, peerDisplayName: friend.displayName, audioOnly: true)
+                    }
+                } label: {
+                    Image(systemName: "phone.fill")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 36, height: 36)
+                        .background(Circle().fill(VipleMailPalette.success))
+                }
+                .accessibilityLabel("Appel classique audio")
+
+                Button {
+                    Task {
+                        await vm.startVisioCall(to: friend.email, peerDisplayName: friend.displayName, audioOnly: false)
+                    }
+                } label: {
+                    Image(systemName: "video.fill")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 36, height: 36)
+                        .background(Circle().fill(VipleMailPalette.indigo))
+                }
+                .accessibilityLabel("Appel Viple Visio")
+
+                Button {
+                    Task {
+                        await vm.startOrOpenChat(with: friend.email)
+                    }
+                } label: {
+                    Image(systemName: "bubble.left.and.bubble.right.fill")
+                        .font(.system(size: 13.5, weight: .bold))
+                        .foregroundStyle(VipleMailPalette.primary)
+                        .frame(width: 34, height: 36)
+                        .background(Circle().fill(VipleMailPalette.primary.opacity(0.12)))
+                }
+
+                Menu {
+                    Button {
+                        vm.presentComposer(.newMail(to: friend.email, forceMail: true))
+                    } label: {
+                        Label("Envoyer un courrier", systemImage: "envelope.fill")
+                    }
+                    Button(role: .destructive) {
+                        Task { await vm.respondToFriendRequest(friend, action: "remove") }
+                    } label: {
+                        Label("Retirer des amis", systemImage: "person.badge.minus")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(VipleMailPalette.inkSecondary)
+                        .frame(width: 28, height: 36)
+                }
+            }
+        }
+        .vipleMailCard(cornerRadius: 18, padding: 13)
+    }
+
+    private var contactsSectionView: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Contacts (\(filteredContacts.count))", systemImage: "person.crop.rectangle.stack.fill")
+                    .font(.system(size: 16, weight: .black, design: .rounded))
+                    .foregroundStyle(VipleMailPalette.ink)
+                Spacer()
+            }
+
+            if filteredContacts.isEmpty {
+                emptyContactsView
+                    .frame(minHeight: 200)
+            } else {
+                ForEach(filteredContacts) { contact in
+                    contactCard(contact)
+                }
+            }
+        }
+    }
+
+    private var addVipleFriendSheet: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("identifiant@viplemail.fr ou compte Viple Live ID", text: $addFriendHandleOrEmail)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.emailAddress)
+                        .autocorrectionDisabled()
+                        .vipleMailTextInput()
+                } header: {
+                    Text("Ajouter un membre Viple Live ID en ami")
+                } footer: {
+                    Text("Seuls les utilisateurs possédant un compte Viple Live ID peuvent être ajoutés. Une fois votre demande acceptée, vous pourrez l'appeler en appel classique (audio) ou en Viple Visio.")
+                }
+            }
+            .navigationTitle("Ajouter en ami")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Annuler") { isShowingAddFriendSheet = false }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Envoyer") {
+                        let target = addFriendHandleOrEmail
+                        isShowingAddFriendSheet = false
+                        Task {
+                            await vm.requestAddVipleFriend(target)
+                        }
+                    }
+                    .fontWeight(.bold)
+                    .disabled(addFriendHandleOrEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .presentationDetents([.medium])
     }
 
     private var contactsHeader: some View {
         VStack(spacing: 10) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Carnet d'adresses & VIP")
+                    Text("Amis & Contacts")
                         .font(.system(size: 22, weight: .black, design: .rounded))
                         .foregroundStyle(VipleMailPalette.ink)
-                    Text("Synchronisé avec Viple Live Contacts (ABCH)")
+                    Text("Amis Viple Live (Appels Visio) & Carnet d'adresses")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(VipleMailPalette.inkSecondary)
                 }
                 Spacer()
-                Button {
-                    prepareNewContactForm()
-                    vm.isShowingAddContactSheet = true
+                Menu {
+                    Button {
+                        addFriendHandleOrEmail = ""
+                        isShowingAddFriendSheet = true
+                    } label: {
+                        Label("Ajouter un ami Viple Live ID…", systemImage: "person.2.wave.2.fill")
+                    }
+                    Button {
+                        prepareNewContactForm()
+                        vm.isShowingAddContactSheet = true
+                    } label: {
+                        Label("Nouveau contact d'adresse…", systemImage: "person.crop.circle.badge.plus")
+                    }
                 } label: {
                     Label("Ajouter", systemImage: "person.badge.plus")
                         .font(.system(size: 13, weight: .bold, design: .rounded))
@@ -86,6 +373,13 @@ public struct MailContactsView: View {
                         .background(Capsule().fill(VipleMailPalette.primary))
                 }
             }
+
+            Picker("Section", selection: $sectionFilter) {
+                Text("Tous").tag(0)
+                Text("Amis (\(vm.acceptedFriends.count))").tag(1)
+                Text("Contacts (\(vm.contacts.count))").tag(2)
+            }
+            .pickerStyle(.segmented)
 
             HStack(spacing: 10) {
                 HStack(spacing: 8) {

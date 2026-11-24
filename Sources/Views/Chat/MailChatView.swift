@@ -526,8 +526,86 @@ public struct MailChatConversationView: View {
                 }
             }
 
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if vm.isMutualFriend(activeSession.peerEmail) {
+                    Button {
+                        Task {
+                            await vm.startVisioCall(
+                                to: activeSession.peerEmail,
+                                peerDisplayName: activeSession.peerDisplayName,
+                                audioOnly: true
+                            )
+                        }
+                    } label: {
+                        Image(systemName: "phone.fill")
+                            .foregroundStyle(VipleMailPalette.success)
+                    }
+                    .accessibilityLabel("Appel classique audio")
+
+                    Button {
+                        Task {
+                            await vm.startVisioCall(
+                                to: activeSession.peerEmail,
+                                peerDisplayName: activeSession.peerDisplayName,
+                                audioOnly: false
+                            )
+                        }
+                    } label: {
+                        Image(systemName: "video.fill")
+                            .foregroundStyle(VipleMailPalette.indigo)
+                    }
+                    .accessibilityLabel("Appel Viple Visio")
+                }
+
                 Menu {
+                    let chatPeerKey = activeSession.peerEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                    if let peerStatus = vm.peerStatusCache[chatPeerKey],
+                       peerStatus.isVipleLiveIdUser,
+                       peerStatus.friendshipStatus != "self" {
+                        if peerStatus.friendshipStatus == "friends" {
+                            Button {
+                                Task {
+                                    await vm.startVisioCall(
+                                        to: activeSession.peerEmail,
+                                        peerDisplayName: activeSession.peerDisplayName,
+                                        audioOnly: true
+                                    )
+                                }
+                            } label: {
+                                Label("Appel classique (audio)", systemImage: "phone.fill")
+                            }
+                            Button {
+                                Task {
+                                    await vm.startVisioCall(
+                                        to: activeSession.peerEmail,
+                                        peerDisplayName: activeSession.peerDisplayName,
+                                        audioOnly: false
+                                    )
+                                }
+                            } label: {
+                                Label("Appel Viple Visio", systemImage: "video.fill")
+                            }
+                        } else if peerStatus.friendshipStatus == "pending_incoming",
+                                  let inc = vm.friendshipForEmail(chatPeerKey) {
+                            Button {
+                                Task { await vm.respondToFriendRequest(inc, action: "accept") }
+                            } label: {
+                                Label("Accepter la demande d'ami", systemImage: "person.crop.circle.badge.checkmark")
+                            }
+                        } else if peerStatus.friendshipStatus == "pending_outgoing" {
+                            Label("Demande d'ami envoyée", systemImage: "clock.badge.checkmark")
+                        } else {
+                            Button {
+                                Task {
+                                    await vm.requestAddVipleFriend(chatPeerKey)
+                                }
+                            } label: {
+                                Label("Ajouter en ami", systemImage: "person.badge.plus")
+                            }
+                        }
+                        Divider()
+                    }
+
                     Button {
                         vm.presentComposer(.newMail(to: activeSession.peerEmail, forceMail: true))
                     } label: {
@@ -583,6 +661,9 @@ public struct MailChatConversationView: View {
             Task {
                 await handleSelectedPhoto(newItem)
             }
+        }
+        .task(id: activeSession.peerEmail) {
+            await vm.ensurePeerVipleLiveStatusLoaded(activeSession.peerEmail)
         }
         .fileImporter(
             isPresented: $isShowingFileImporter,

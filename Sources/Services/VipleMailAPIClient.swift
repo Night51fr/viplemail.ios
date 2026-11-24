@@ -1127,4 +1127,149 @@ public final class VipleMailAPIClient {
         }
         return try await getJSON("/imessage/resolve-mail-link", queryItems: items)
     }
+
+    // MARK: - 11. Amis Viple Live ID, Appels Viple Visio & Agenda (#viplecalandar)
+
+    public func fetchFriends(email: String, cid: String?) async throws -> VipleFriendsListResponse {
+        var items: [URLQueryItem] = [URLQueryItem(name: "email", value: email)]
+        if let cid, !cid.isEmpty { items.append(URLQueryItem(name: "cid", value: cid)) }
+        return try await getJSON("/friends", queryItems: items)
+    }
+
+    public func lookupVipleLiveIdPeer(email: String, cid: String?, targetEmail: String) async throws -> VipleLiveIdPeerStatus {
+        var items: [URLQueryItem] = [
+            URLQueryItem(name: "email", value: email),
+            URLQueryItem(name: "targetEmail", value: targetEmail)
+        ]
+        if let cid, !cid.isEmpty { items.append(URLQueryItem(name: "cid", value: cid)) }
+        return try await getJSON("/friends/lookup", queryItems: items)
+    }
+
+    public func sendFriendRequest(email: String, cid: String?, targetEmail: String) async throws -> VipleFriendMutationResponse {
+        return try await postJSON("/friends/request", body: [
+            "email": email,
+            "cid": cid ?? "",
+            "targetEmail": targetEmail
+        ])
+    }
+
+    public func respondToFriendRequest(email: String, cid: String?, friendshipId: String, action: String) async throws -> VipleFriendMutationResponse {
+        return try await postJSON("/friends/respond", body: [
+            "email": email,
+            "cid": cid ?? "",
+            "friendshipId": friendshipId,
+            "action": action
+        ])
+    }
+
+    public func startDirectVisioCall(email: String, cid: String?, targetEmail: String, mode: String) async throws -> VipleVisioCallStartResponse {
+        return try await postJSON("/visio/calls/start", body: [
+            "email": email,
+            "cid": cid ?? "",
+            "targetEmail": targetEmail,
+            "mode": mode
+        ])
+    }
+
+    public func fetchActiveVisioCalls(email: String, cid: String?, trackedCallId: String? = nil) async throws -> VipleVisioActiveCallsResponse {
+        var items: [URLQueryItem] = [URLQueryItem(name: "email", value: email)]
+        if let cid, !cid.isEmpty { items.append(URLQueryItem(name: "cid", value: cid)) }
+        if let trackedCallId, !trackedCallId.isEmpty {
+            items.append(URLQueryItem(name: "callId", value: trackedCallId))
+        }
+        return try await getJSON("/visio/calls/active", queryItems: items)
+    }
+
+    public func respondToVisioCall(email: String, cid: String?, callId: String, action: String) async throws -> VipleVisioCallRespondResponse {
+        return try await postJSON("/visio/calls/respond", body: [
+            "email": email,
+            "cid": cid ?? "",
+            "callId": callId,
+            "action": action
+        ])
+    }
+
+    public func fetchAgendaEvents(email: String, cid: String?) async throws -> VipleAgendaListResponse {
+        var items: [URLQueryItem] = [URLQueryItem(name: "email", value: email)]
+        if let cid, !cid.isEmpty { items.append(URLQueryItem(name: "cid", value: cid)) }
+        return try await getJSON("/agenda/events", queryItems: items)
+    }
+
+    public func createAgendaEvent(
+        email: String,
+        cid: String?,
+        title: String,
+        description: String,
+        location: String,
+        startUtc: String,
+        endUtc: String,
+        colorHex: String,
+        isVisioSession: Bool,
+        invitedFriends: [String],
+        invitedGuests: [String],
+        sendGuestMail: Bool = true
+    ) async throws -> VipleAgendaCreateResponse {
+        return try await postJSON("/agenda/events/create", body: [
+            "email": email,
+            "cid": cid ?? "",
+            "title": title,
+            "description": description,
+            "location": location,
+            "startUtc": startUtc,
+            "endUtc": endUtc,
+            "colorHex": colorHex,
+            "isVisioSession": isVisioSession,
+            "invitedFriends": invitedFriends,
+            "invitedGuests": invitedGuests,
+            "sendGuestMail": sendGuestMail
+        ])
+    }
+
+    public func sendVisioGuestLinkByMail(
+        email: String,
+        cid: String?,
+        eventId: String?,
+        title: String,
+        recipientEmails: [String],
+        note: String?
+    ) async throws -> VipleAgendaSendLinkResponse {
+        var body: [String: Any] = [
+            "email": email,
+            "cid": cid ?? "",
+            "title": title,
+            "recipientEmails": recipientEmails
+        ]
+        if let eventId, !eventId.isEmpty { body["eventId"] = eventId }
+        if let note, !note.isEmpty { body["note"] = note }
+        return try await postJSON("/agenda/events/send-visio-link", body: body)
+    }
+
+    public func importCalendarInviteFromMail(
+        email: String,
+        cid: String?,
+        invite: ParsedVipleCalendarInvite
+    ) async throws -> VipleAgendaImportResponse {
+        var body: [String: Any] = [
+            "email": email,
+            "cid": cid ?? "",
+            "title": invite.title,
+            "description": invite.notes,
+            "location": invite.location,
+            "startUtc": VipleCalendarParser.formatISOUtc(invite.startDate),
+            "endUtc": VipleCalendarParser.formatISOUtc(invite.endDate),
+            "organizerEmail": invite.organizerEmail,
+            "organizerName": invite.organizerName
+        ]
+        if let vUrl = invite.visioJoinUrl, !vUrl.isEmpty { body["visioJoinUrl"] = vUrl }
+        if let mId = invite.sourceMessageId, !mId.isEmpty { body["sourceMessageId"] = mId }
+        return try await postJSON("/agenda/import-from-mail", body: body)
+    }
+
+    public func deleteAgendaEvent(email: String, cid: String?, eventId: String) async throws -> VipleAgendaListResponse {
+        return try await postJSON("/agenda/events/delete", body: [
+            "email": email,
+            "cid": cid ?? "",
+            "eventId": eventId
+        ])
+    }
 }

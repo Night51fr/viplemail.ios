@@ -57,6 +57,12 @@ public struct VipleMailMainView: View {
                 .transition(.move(edge: .top).combined(with: .opacity))
                 .zIndex(99)
             }
+
+            if launchStage == .ready && vm.isAuthenticated {
+                VipleVisioGlobalCallOverlay()
+                    .environmentObject(vm)
+                    .zIndex(200)
+            }
         }
         .onChange(of: vm.isInitialBootstrapping) { _, isBootstrapping in
             if !isBootstrapping && vipleMailMinimumSplashDone && launchStage == .vipleMailSplash {
@@ -64,6 +70,10 @@ public struct VipleMailMainView: View {
                     launchStage = .ready
                 }
             }
+        }
+        .fullScreenCover(isPresented: $vm.isShowingAcademyHelp) {
+            CenelisAcademyHelpView()
+                .preferredColorScheme(vm.preferredColorSchemeOverride)
         }
         .fullScreenCover(isPresented: $vm.isShowingComposeSheet) {
             ComposeMailView(mode: vm.activeComposeMode ?? .newMail())
@@ -227,8 +237,10 @@ public struct VipleMailMainView: View {
                         case 1:
                             MailChatView()
                         case 2:
-                            MailFoldersView()
+                            MailAgendaView()
                         case 3:
+                            MailFoldersView()
+                        case 4:
                             MailContactsView()
                         default:
                             MailSettingsView()
@@ -268,8 +280,8 @@ public struct VipleMailMainView: View {
                     .zIndex(11)
                 }
 
-                // Bouton Flottant « Nouveau » (masqué dans l'onglet Chat, en sélection multiple et pendant la lecture)
-                if vm.selectedTab != 1 && !vm.isSelectionMode && !isDetailOverlayActive {
+                // Bouton Flottant « Nouveau » (masqué dans Chat, Agenda, en sélection multiple et pendant la lecture)
+                if vm.selectedTab != 1 && vm.selectedTab != 2 && !vm.isSelectionMode && !isDetailOverlayActive {
                     Button {
                         vm.presentComposer(.newMail())
                     } label: {
@@ -304,10 +316,22 @@ public struct VipleMailMainView: View {
     // MARK: - En-tête Signature Viple Mail (Logo Horizontal en Haut à Gauche + Boîte Active + Actions)
 
     private var topBrandHeaderBar: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             VipleMailHorizontalLogoView(height: 36)
 
             Spacer()
+
+            Button {
+                vm.isShowingAcademyHelp = true
+            } label: {
+                Image(systemName: "questionmark.circle.fill")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(Color(red: 0.078, green: 0.325, blue: 0.275))
+                    .frame(width: 36, height: 36)
+                    .background(Circle().fill(VipleMailPalette.surfaceSubtle))
+                    .overlay(Circle().stroke(VipleMailPalette.border, lineWidth: 1))
+            }
+            .accessibilityLabel("Aide & Formation Cenelis Academy")
 
             if let user = vm.currentUser {
                 Menu {
@@ -415,8 +439,14 @@ public struct VipleMailMainView: View {
                     }
 
                     Button {
+                        vm.isShowingAcademyHelp = true
+                    } label: {
+                        Label("Aide & Cours (Cenelis Academy)", systemImage: "graduationcap.fill")
+                    }
+
+                    Button {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
-                            vm.selectedTab = 4
+                            vm.selectedTab = 5
                         }
                     } label: {
                         Label("Réglages & Comptes", systemImage: "slider.horizontal.3")
@@ -502,7 +532,12 @@ public struct VipleMailMainView: View {
     // MARK: - Barre de Navigation Inférieure Optimisée iOS
 
     private var bottomNavigationBar: some View {
-        HStack(spacing: 4) {
+        let todayEventsCount = vm.agendaEvents.filter { Calendar.current.isDateInToday($0.startDate) }.count
+        let contactsBadge = vm.incomingFriendRequests.count > 0
+            ? vm.incomingFriendRequests.count
+            : vm.contacts.filter { $0.isFavorite }.count
+
+        return HStack(spacing: 2) {
             tabBarItem(
                 index: 0,
                 title: "Boîte",
@@ -517,24 +552,30 @@ public struct VipleMailMainView: View {
             )
             tabBarItem(
                 index: 2,
+                title: "Agenda",
+                icon: "calendar",
+                badge: todayEventsCount
+            )
+            tabBarItem(
+                index: 3,
                 title: "Dossiers",
                 icon: "folder.fill",
                 badge: 0
             )
             tabBarItem(
-                index: 3,
+                index: 4,
                 title: "Contacts",
                 icon: "person.2.crop.square.stack.fill",
-                badge: vm.contacts.filter { $0.isFavorite }.count
+                badge: contactsBadge
             )
             tabBarItem(
-                index: 4,
+                index: 5,
                 title: "Réglages",
                 icon: "slider.horizontal.3",
                 badge: 0
             )
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 6)
         .padding(.top, 8)
         .padding(.bottom, 6)
         .background(
@@ -570,7 +611,7 @@ public struct VipleMailMainView: View {
                     Image(systemName: icon)
                         .font(.system(size: 18, weight: isSelected ? .bold : .medium))
                         .foregroundStyle(isSelected ? VipleMailPalette.primary : VipleMailPalette.inkMuted)
-                        .frame(width: 42, height: 26)
+                        .frame(width: 36, height: 25)
                         .background(
                             Capsule()
                                 .fill(isSelected ? VipleMailPalette.primary.opacity(0.14) : Color.clear)
@@ -578,20 +619,20 @@ public struct VipleMailMainView: View {
 
                     if badge > 0 {
                         Text(badge > 99 ? "99+" : "\(badge)")
-                            .font(.system(size: 10, weight: .black, design: .rounded))
+                            .font(.system(size: 9.5, weight: .black, design: .rounded))
                             .foregroundStyle(.white)
-                            .padding(.horizontal, 5)
+                            .padding(.horizontal, 4.5)
                             .padding(.vertical, 1.5)
                             .background(
                                 Capsule()
-                                    .fill(index == 3 ? VipleMailPalette.vipGold : VipleMailPalette.primary)
+                                    .fill(index == 4 && vm.incomingFriendRequests.isEmpty ? VipleMailPalette.vipGold : VipleMailPalette.primary)
                             )
-                            .offset(x: 8, y: -4)
+                            .offset(x: 6, y: -4)
                     }
                 }
 
                 Text(title)
-                    .font(.system(size: 11, weight: isSelected ? .bold : .medium, design: .rounded))
+                    .font(.system(size: 10, weight: isSelected ? .bold : .medium, design: .rounded))
                     .foregroundStyle(isSelected ? VipleMailPalette.primary : VipleMailPalette.inkMuted)
                     .lineLimit(1)
             }

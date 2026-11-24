@@ -590,6 +590,26 @@ public struct MessageDetailView: View {
 
                     Divider()
 
+                    if !currentMessage.isLockedByCenelisPin {
+                        let parsedInvites = VipleCalendarParser.extractInvites(
+                            fromPlain: currentMessage.plainBodyText,
+                            html: currentMessage.bodyHtml,
+                            defaultTitle: currentMessage.subject,
+                            organizerEmail: currentMessage.senderEmail,
+                            organizerName: currentMessage.senderName,
+                            messageId: currentMessage.id
+                        )
+                        if !parsedInvites.isEmpty {
+                            VStack(spacing: 10) {
+                                ForEach(parsedInvites) { inv in
+                                    VipleCalendarMailInviteCardView(invite: inv)
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.top, 12)
+                        }
+                    }
+
                     classicEmailBodySection(currentMessage)
 
                     if !previousEmailsInThread.isEmpty {
@@ -606,6 +626,12 @@ public struct MessageDetailView: View {
         }
         .background(VipleMailPalette.surface.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: currentMessage.senderEmail) {
+            let counterparty = currentMessage.folder.lowercased() == "sent"
+                ? (currentMessage.recipientEmail.split(separator: ",").first.map(String.init) ?? currentMessage.senderEmail)
+                : currentMessage.senderEmail
+            await vm.ensurePeerVipleLiveStatusLoaded(counterparty)
+        }
         .onDisappear {
             pinUnlockedMessage = nil
         }
@@ -679,6 +705,59 @@ public struct MessageDetailView: View {
                 .accessibilityLabel("Marquer comme non lu")
 
                 Menu {
+                    let counterpartyEmail = (currentMessage.folder.lowercased() == "sent"
+                        ? (currentMessage.recipientEmail.split(separator: ",").first.map(String.init) ?? currentMessage.senderEmail)
+                        : currentMessage.senderEmail).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+                    if let peerStatus = vm.peerStatusCache[counterpartyEmail],
+                       peerStatus.isVipleLiveIdUser,
+                       peerStatus.friendshipStatus != "self" {
+                        if peerStatus.friendshipStatus == "friends" {
+                            Button {
+                                Task {
+                                    await vm.startVisioCall(
+                                        to: counterpartyEmail,
+                                        peerDisplayName: peerStatus.displayName ?? currentMessage.senderName,
+                                        audioOnly: true
+                                    )
+                                }
+                            } label: {
+                                Label("Appeler en appel classique (audio)", systemImage: "phone.fill")
+                            }
+                            Button {
+                                Task {
+                                    await vm.startVisioCall(
+                                        to: counterpartyEmail,
+                                        peerDisplayName: peerStatus.displayName ?? currentMessage.senderName,
+                                        audioOnly: false
+                                    )
+                                }
+                            } label: {
+                                Label("Appeler en Viple Visio", systemImage: "video.fill")
+                            }
+                        } else if peerStatus.friendshipStatus == "pending_incoming",
+                                  let incomingFriend = vm.friendshipForEmail(counterpartyEmail) {
+                            Button {
+                                Task {
+                                    await vm.respondToFriendRequest(incomingFriend, action: "accept")
+                                }
+                            } label: {
+                                Label("Accepter la demande d'ami", systemImage: "person.crop.circle.badge.checkmark")
+                            }
+                        } else if peerStatus.friendshipStatus == "pending_outgoing" {
+                            Label("Demande d'ami envoyée", systemImage: "clock.badge.checkmark")
+                        } else {
+                            Button {
+                                Task {
+                                    await vm.requestAddVipleFriend(counterpartyEmail)
+                                }
+                            } label: {
+                                Label("Ajouter en ami", systemImage: "person.badge.plus")
+                            }
+                        }
+                        Divider()
+                    }
+
                     if !currentMessage.isLockedByCenelisPin {
                         Button {
                             Task {

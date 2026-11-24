@@ -38,6 +38,7 @@ public struct ComposeMailView: View {
     @State private var isShowingCancelDialog: Bool = false
     @State private var isShowingContactPicker: Bool = false
     @State private var contactPickerTarget: RecipientTarget = .to
+    @State private var isShowingVipleCalendarSheet: Bool = false
 
     @FocusState private var focusedField: ComposeField?
     @State private var isBodyFocused: Bool = false
@@ -104,6 +105,31 @@ public struct ComposeMailView: View {
 
     private var isShowingChatMailToggle: Bool {
         detectedVipleMailRecipient != nil
+    }
+
+    private var primaryParsedRecipientEmail: String? {
+        let parts = toField
+            .split(whereSeparator: { $0 == "," || $0 == ";" })
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard let first = parts.first else { return nil }
+        var candidate = first
+        if let openIdx = candidate.firstIndex(of: "<"),
+           let closeIdx = candidate.firstIndex(of: ">"),
+           openIdx < closeIdx {
+            candidate = String(candidate[candidate.index(after: openIdx)..<closeIdx])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let lower = candidate.lowercased()
+        guard lower.contains("@"), !lower.contains(" ") else { return nil }
+        return lower
+    }
+
+    private var hasBareVipleCalendarKeyword: Bool {
+        let lower = bodyField.lowercased()
+        return (lower.contains("#viplecalandar") || lower.contains("#viplecalendar"))
+            && !lower.contains("#viplecalandar[")
+            && !lower.contains("#viplecalendar[")
     }
 
     private var isEffectiveChatMode: Bool {
@@ -198,6 +224,27 @@ public struct ComposeMailView: View {
                         }
 
                         // 4. Corps du message (Chat instantané ou Mail classique)
+                        if !isEffectiveChatMode && hasBareVipleCalendarKeyword {
+                            Button {
+                                isShowingVipleCalendarSheet = true
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "calendar.badge.plus")
+                                        .foregroundStyle(VipleMailPalette.primary)
+                                    Text("Formule #viplecalandar détectée — Configurer la date & le salon Visio…")
+                                        .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                                        .foregroundStyle(VipleMailPalette.ink)
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 11, weight: .bold))
+                                        .foregroundStyle(VipleMailPalette.primary)
+                                }
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .background(VipleMailPalette.primary.opacity(0.10))
+                            }
+                        }
+
                         appleMailBodyEditor
 
                         // 5. Aperçu de la signature uniquement en mode Mail classique
@@ -224,7 +271,77 @@ public struct ComposeMailView: View {
                     }
                 }
 
-                ToolbarItem(placement: .confirmationAction) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Menu {
+                        if let rcptEmail = primaryParsedRecipientEmail,
+                           let peerStatus = vm.peerStatusCache[rcptEmail],
+                           peerStatus.isVipleLiveIdUser,
+                           peerStatus.friendshipStatus != "self" {
+                            if peerStatus.friendshipStatus == "friends" {
+                                Button {
+                                    dismiss()
+                                    Task {
+                                        await vm.startVisioCall(
+                                            to: rcptEmail,
+                                            peerDisplayName: peerStatus.displayName ?? rcptEmail,
+                                            audioOnly: true
+                                        )
+                                    }
+                                } label: {
+                                    Label("Appeler en audio (Viple Visio)", systemImage: "phone.fill")
+                                }
+                                Button {
+                                    dismiss()
+                                    Task {
+                                        await vm.startVisioCall(
+                                            to: rcptEmail,
+                                            peerDisplayName: peerStatus.displayName ?? rcptEmail,
+                                            audioOnly: false
+                                        )
+                                    }
+                                } label: {
+                                    Label("Appeler en visio (Viple Visio)", systemImage: "video.fill")
+                                }
+                            } else if peerStatus.friendshipStatus == "pending_incoming",
+                                      let inc = vm.friendshipForEmail(rcptEmail) {
+                                Button {
+                                    Task { await vm.respondToFriendRequest(inc, action: "accept") }
+                                } label: {
+                                    Label("Accepter la demande d'ami", systemImage: "person.crop.circle.badge.checkmark")
+                                }
+                            } else if peerStatus.friendshipStatus == "pending_outgoing" {
+                                Label("Demande d'ami envoyée", systemImage: "clock.badge.checkmark")
+                            } else {
+                                Button {
+                                    Task { await vm.requestAddVipleFriend(rcptEmail) }
+                                } label: {
+                                    Label("Ajouter en ami", systemImage: "person.badge.plus")
+                                }
+                            }
+                            Divider()
+                        }
+
+                        if !isEffectiveChatMode {
+                            Button {
+                                isShowingVipleCalendarSheet = true
+                            } label: {
+                                Label("Insérer un RDV #viplecalandar…", systemImage: "calendar.badge.plus")
+                            }
+                        }
+
+                        Button {
+                            contactPickerTarget = .to
+                            isShowingContactPicker = true
+                        } label: {
+                            Label("Choisir dans Amis & Contacts…", systemImage: "person.2.fill")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .font(.system(size: 20))
+                            .foregroundStyle(VipleMailPalette.primary)
+                    }
+                    .accessibilityLabel("Plus d'actions")
+
                     Button {
                         submitNow()
                     } label: {
@@ -257,11 +374,35 @@ public struct ComposeMailView: View {
             .sheet(isPresented: $isShowingContactPicker) {
                 contactPickerSheet
             }
+            .sheet(isPresented: $isShowingVipleCalendarSheet) {
+                VipleCalendarComposerSheet(defaultTitle: subjectField) { chosenTitle, formulaLine in
+                    if subjectField.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        subjectField = chosenTitle
+                    }
+                    var cleaned = bodyField
+                        .replacingOccurrences(of: "#viplecalandar", with: "", options: .caseInsensitive)
+                        .replacingOccurrences(of: "#viplecalendar", with: "", options: .caseInsensitive)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if cleaned.isEmpty {
+                        cleaned = "Bonjour,\n\nJe vous propose ce rendez-vous :\n\(formulaLine)\n"
+                    } else {
+                        cleaned += "\n\n\(formulaLine)\n"
+                    }
+                    bodyField = cleaned
+                }
+                .environmentObject(vm)
+                .preferredColorScheme(vm.preferredColorSchemeOverride)
+            }
             .onAppear {
                 vm.applyWindowInterfaceStyle()
                 populateInitialFields()
                 includeSignature = vm.settings.signatureEnabled
                 syncChannelWithRecipient()
+                if let initialRcpt = primaryParsedRecipientEmail {
+                    Task {
+                        await vm.ensurePeerVipleLiveStatusLoaded(initialRcpt)
+                    }
+                }
                 Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 250_000_000)
                     if toField.isEmpty {
@@ -286,6 +427,11 @@ public struct ComposeMailView: View {
             }
             .onChange(of: toField) { _, _ in
                 syncChannelWithRecipient()
+                if let rcpt = primaryParsedRecipientEmail {
+                    Task {
+                        await vm.ensurePeerVipleLiveStatusLoaded(rcpt)
+                    }
+                }
             }
             .onChange(of: ccField) { _, _ in
                 syncChannelWithRecipient()
@@ -1084,6 +1230,16 @@ public struct ComposeMailView: View {
             }
 
             if !isEffectiveChatMode {
+                Button {
+                    isShowingVipleCalendarSheet = true
+                } label: {
+                    Image(systemName: "calendar.badge.plus")
+                        .font(.system(size: 18, weight: .medium))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                }
+                .accessibilityLabel("Insérer un rendez-vous #viplecalandar")
+
                 Menu {
                     Button {
                         insertAtEndOfBody("\n• ")
@@ -1168,40 +1324,78 @@ public struct ComposeMailView: View {
     private var contactPickerSheet: some View {
         NavigationStack {
             List {
-                if vm.contacts.isEmpty {
-                    Text("Aucun contact enregistré dans votre carnet Viple Mail.")
-                        .font(.system(size: 14))
-                        .foregroundStyle(VipleMailPalette.inkMuted)
-                        .padding(.vertical, 12)
-                } else {
-                    ForEach(vm.contacts) { contact in
-                        Button {
-                            if contactPickerTarget == .to && toField.trimmingCharacters(in: .whitespaces).isEmpty {
-                                toField = contact.contactEmail
-                            } else {
-                                appendRecipient(contact.contactEmail, to: contactPickerTarget)
+                if !vm.acceptedFriends.isEmpty {
+                    Section("Amis Viple Live ID") {
+                        ForEach(vm.acceptedFriends) { friend in
+                            Button {
+                                if contactPickerTarget == .to && toField.trimmingCharacters(in: .whitespaces).isEmpty {
+                                    toField = friend.email
+                                } else {
+                                    appendRecipient(friend.email, to: contactPickerTarget)
+                                }
+                                isShowingContactPicker = false
+                            } label: {
+                                HStack(spacing: 12) {
+                                    VipleMailAvatarView(
+                                        name: friend.displayName,
+                                        email: friend.email,
+                                        avatarUrl: friend.avatarUrl,
+                                        size: 40,
+                                        isVip: true
+                                    )
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(friend.displayName)
+                                            .font(.system(size: 15, weight: .bold))
+                                            .foregroundStyle(VipleMailPalette.ink)
+                                        Text(friend.email)
+                                            .font(.system(size: 13))
+                                            .foregroundStyle(VipleMailPalette.primary)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "plus.circle.fill")
+                                        .foregroundStyle(VipleMailPalette.success)
+                                }
                             }
-                            isShowingContactPicker = false
-                        } label: {
-                            HStack(spacing: 12) {
-                                VipleMailAvatarView(
-                                    name: contact.displayName,
-                                    email: contact.contactEmail,
-                                    avatarUrl: vm.resolveAvatarUrl(for: contact.contactEmail, explicitUrl: contact.avatarUrl),
-                                    size: 40,
-                                    isVip: contact.isFavorite
-                                )
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(contact.displayName)
-                                        .font(.system(size: 15, weight: .bold))
-                                        .foregroundStyle(VipleMailPalette.ink)
-                                    Text(contact.contactEmail)
-                                        .font(.system(size: 13))
+                        }
+                    }
+                }
+
+                Section("Contacts") {
+                    if vm.contacts.isEmpty {
+                        Text("Aucun contact enregistré dans votre carnet Viple Mail.")
+                            .font(.system(size: 14))
+                            .foregroundStyle(VipleMailPalette.inkMuted)
+                            .padding(.vertical, 12)
+                    } else {
+                        ForEach(vm.contacts) { contact in
+                            Button {
+                                if contactPickerTarget == .to && toField.trimmingCharacters(in: .whitespaces).isEmpty {
+                                    toField = contact.contactEmail
+                                } else {
+                                    appendRecipient(contact.contactEmail, to: contactPickerTarget)
+                                }
+                                isShowingContactPicker = false
+                            } label: {
+                                HStack(spacing: 12) {
+                                    VipleMailAvatarView(
+                                        name: contact.displayName,
+                                        email: contact.contactEmail,
+                                        avatarUrl: vm.resolveAvatarUrl(for: contact.contactEmail, explicitUrl: contact.avatarUrl),
+                                        size: 40,
+                                        isVip: contact.isFavorite
+                                    )
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(contact.displayName)
+                                            .font(.system(size: 15, weight: .bold))
+                                            .foregroundStyle(VipleMailPalette.ink)
+                                        Text(contact.contactEmail)
+                                            .font(.system(size: 13))
+                                            .foregroundStyle(VipleMailPalette.primary)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "plus.circle.fill")
                                         .foregroundStyle(VipleMailPalette.primary)
                                 }
-                                Spacer()
-                                Image(systemName: "plus.circle.fill")
-                                    .foregroundStyle(VipleMailPalette.primary)
                             }
                         }
                     }
