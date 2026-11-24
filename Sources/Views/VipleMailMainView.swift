@@ -6,6 +6,16 @@ public struct VipleMailMainView: View {
     @EnvironmentObject private var vm: VipleMailViewModel
     @Environment(\.colorScheme) private var colorScheme
 
+    private enum LaunchExperienceStage {
+        case cenelisAppsIntro
+        case vipleMailSplash
+        case ready
+    }
+
+    @State private var launchStage: LaunchExperienceStage = .cenelisAppsIntro
+    @State private var vipleMailMinimumSplashDone: Bool = false
+    @State private var splashEmblemAppeared: Bool = false
+
     public init() {}
 
     public var body: some View {
@@ -13,19 +23,31 @@ public struct VipleMailMainView: View {
             VipleMailPalette.background
                 .ignoresSafeArea()
 
-            if vm.isInitialBootstrapping {
+            switch launchStage {
+            case .cenelisAppsIntro:
+                CenelisAppsIntroView(currentApp: .vipleMail) {
+                    transitionFromEcosystemPortalToAppSplash()
+                }
+                .transition(.opacity)
+                .zIndex(30)
+
+            case .vipleMailSplash:
                 splashScreen
                     .transition(.opacity)
-            } else if !vm.isAuthenticated {
-                VipleMailAuthView()
-                    .environmentObject(vm)
-                    .transition(.opacity)
-            } else {
-                authenticatedShell
-                    .transition(.opacity)
+                    .zIndex(25)
+
+            case .ready:
+                if !vm.isAuthenticated {
+                    VipleMailAuthView()
+                        .environmentObject(vm)
+                        .transition(.opacity)
+                } else {
+                    authenticatedShell
+                        .transition(.opacity)
+                }
             }
 
-            if let toast = vm.activeToastMessage {
+            if launchStage == .ready, let toast = vm.activeToastMessage {
                 VStack {
                     toastBanner(text: toast)
                         .padding(.top, 8)
@@ -34,6 +56,13 @@ public struct VipleMailMainView: View {
                 }
                 .transition(.move(edge: .top).combined(with: .opacity))
                 .zIndex(99)
+            }
+        }
+        .onChange(of: vm.isInitialBootstrapping) { _, isBootstrapping in
+            if !isBootstrapping && vipleMailMinimumSplashDone && launchStage == .vipleMailSplash {
+                withAnimation(.easeInOut(duration: 0.42)) {
+                    launchStage = .ready
+                }
             }
         }
         .fullScreenCover(isPresented: $vm.isShowingComposeSheet) {
@@ -48,7 +77,26 @@ public struct VipleMailMainView: View {
         }
     }
 
-    // MARK: - Splash Screen Animé Viple Mail (Adaptatif Clair / Sombre OLED)
+    private func transitionFromEcosystemPortalToAppSplash() {
+        splashEmblemAppeared = false
+        withAnimation(.easeOut(duration: 0.24)) {
+            launchStage = .vipleMailSplash
+        }
+        withAnimation(.spring(response: 0.54, dampingFraction: 0.78)) {
+            splashEmblemAppeared = true
+        }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_150_000_000)
+            vipleMailMinimumSplashDone = true
+            if !vm.isInitialBootstrapping && launchStage == .vipleMailSplash {
+                withAnimation(.easeInOut(duration: 0.42)) {
+                    launchStage = .ready
+                }
+            }
+        }
+    }
+
+    // MARK: - Acte 2 : LaunchScreen Officiel « Viple Mail » (Émerge du Portail Cenelis Apps)
 
     private var splashScreen: some View {
         ZStack {
@@ -69,27 +117,37 @@ public struct VipleMailMainView: View {
             }
             .ignoresSafeArea()
 
-            VStack(spacing: 20) {
+            VStack(spacing: 22) {
                 ZStack {
                     Circle()
-                        .fill(Color.white.opacity(colorScheme == .dark ? 0.09 : 0.14))
-                        .frame(width: 118, height: 118)
+                        .fill(Color.white.opacity(colorScheme == .dark ? 0.10 : 0.16))
+                        .frame(width: 132, height: 132)
+                        .scaleEffect(splashEmblemAppeared ? 1.0 : 1.35)
 
-                    RoundedRectangle(cornerRadius: 28, style: .continuous)
-                        .fill(colorScheme == .dark ? Color(red: 0.09, green: 0.14, blue: 0.24) : Color.white)
-                        .frame(width: 92, height: 92)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                                .stroke(Color.white.opacity(colorScheme == .dark ? 0.16 : 0), lineWidth: 1)
-                        )
-                        .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.45 : 0.22), radius: 18, x: 0, y: 10)
-
-                    Image(systemName: "envelope.open.fill")
-                        .font(.system(size: 42, weight: .bold))
-                        .foregroundStyle(colorScheme == .dark ? VipleMailPalette.azureGlow : VipleMailPalette.primary)
+                    #if canImport(UIKit)
+                    if let iconImg = UIImage(named: "EcoIconVipleMail") {
+                        Image(uiImage: iconImg)
+                            .resizable()
+                            .interpolation(.high)
+                            .scaledToFill()
+                            .frame(width: 98, height: 98)
+                            .clipShape(RoundedRectangle(cornerRadius: 23, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 23, style: .continuous)
+                                    .stroke(Color.white.opacity(0.38), lineWidth: 1.2)
+                            )
+                            .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.50 : 0.26), radius: 20, x: 0, y: 10)
+                    } else {
+                        fallbackSplashBadge
+                    }
+                    #else
+                    fallbackSplashBadge
+                    #endif
                 }
+                .scaleEffect(splashEmblemAppeared ? 1.0 : 0.76)
+                .opacity(splashEmblemAppeared ? 1.0 : 0.0)
 
-                VStack(spacing: 6) {
+                VStack(spacing: 7) {
                     HStack(spacing: 6) {
                         Text("Viple")
                             .font(.system(size: 36, weight: .black, design: .rounded))
@@ -102,17 +160,33 @@ public struct VipleMailMainView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark.shield.fill")
                             .foregroundStyle(VipleMailPalette.azureGlow)
-                        Text("Connecté en direct au SSO Viple Live ID")
+                        Text("Connecté en direct au SSO Viple Live ID • MailRTE")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(.white.opacity(0.92))
                     }
                 }
+                .offset(y: splashEmblemAppeared ? 0 : 14)
+                .opacity(splashEmblemAppeared ? 1.0 : 0.0)
 
                 ProgressView()
                     .tint(.white)
                     .scaleEffect(1.15)
-                    .padding(.top, 10)
+                    .padding(.top, 8)
+                    .opacity(splashEmblemAppeared ? 1.0 : 0.0)
             }
+        }
+    }
+
+    private var fallbackSplashBadge: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .fill(colorScheme == .dark ? Color(red: 0.09, green: 0.14, blue: 0.24) : Color.white)
+                .frame(width: 96, height: 96)
+                .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.45 : 0.22), radius: 18, x: 0, y: 10)
+
+            Image(systemName: "envelope.open.fill")
+                .font(.system(size: 42, weight: .bold))
+                .foregroundStyle(colorScheme == .dark ? VipleMailPalette.azureGlow : VipleMailPalette.primary)
         }
     }
 
