@@ -248,8 +248,8 @@ public struct SecureMailReaderView: View {
                     fromPlain: session.bodyText,
                     html: session.bodyText,
                     defaultTitle: session.subjectText,
-                    organizerEmail: session.senderEmail,
-                    organizerName: session.senderEmail,
+                    organizerEmail: session.sender,
+                    organizerName: session.sender,
                     messageId: session.mailId
                 )
                 if !mrteInvites.isEmpty {
