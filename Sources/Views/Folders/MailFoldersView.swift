@@ -40,18 +40,22 @@ public struct MailFoldersView: View {
 
     private var connectedMailboxesSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
+            HStack(spacing: VipleMailLayout.isCompactPhone ? 6 : 10) {
                 Text("MES BOÎTES AUX LETTRES")
-                    .font(.system(size: 11.5, weight: .black, design: .rounded))
+                    .font(.system(size: VipleMailLayout.isCompactPhone ? 10.5 : 11.5, weight: .black, design: .rounded))
                     .foregroundStyle(VipleMailPalette.inkMuted)
-                Spacer()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                Spacer(minLength: 4)
                 Button {
                     vm.isShowingGuestAccessSheet = true
                 } label: {
                     Label("Accès invité", systemImage: "key.radiowaves.forward.fill")
-                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .font(.system(size: VipleMailLayout.isCompactPhone ? 11 : 12, weight: .bold, design: .rounded))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                         .foregroundStyle(VipleMailPalette.primary)
-                        .padding(.horizontal, 9)
+                        .padding(.horizontal, VipleMailLayout.isCompactPhone ? 8 : 9)
                         .padding(.vertical, 5)
                         .background(Capsule().fill(VipleMailPalette.primary.opacity(0.11)))
                 }
@@ -59,7 +63,9 @@ public struct MailFoldersView: View {
                     vm.presentAddExternalAccountSheet()
                 } label: {
                     Label("Externe", systemImage: "plus.circle.fill")
-                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .font(.system(size: VipleMailLayout.isCompactPhone ? 11 : 12, weight: .bold, design: .rounded))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                         .foregroundStyle(VipleMailPalette.primary)
                 }
             }

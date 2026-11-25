@@ -193,44 +193,51 @@ public struct MailContactsView: View {
     }
 
     private func friendCard(_ friend: VipleFriend) -> some View {
-        HStack(spacing: 12) {
+        let compact = VipleMailLayout.isCompactPhone
+        let btnDim: CGFloat = compact ? 31 : 36
+        return HStack(spacing: compact ? 9 : 12) {
             VipleMailAvatarView(
                 name: friend.displayName,
                 email: friend.email,
                 avatarUrl: friend.avatarUrl,
-                size: 46,
+                size: compact ? 38 : 46,
                 isVip: true
             )
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: 2.5) {
+                HStack(spacing: 5) {
                     Text(friend.displayName)
-                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .font(.system(size: compact ? 14 : 15, weight: .bold, design: .rounded))
                         .foregroundStyle(VipleMailPalette.ink)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
                     Text("AMI")
-                        .font(.system(size: 9, weight: .black, design: .rounded))
+                        .font(.system(size: 8.5, weight: .black, design: .rounded))
                         .foregroundStyle(.white)
-                        .padding(.horizontal, 6)
+                        .padding(.horizontal, 5)
                         .padding(.vertical, 2)
                         .background(Capsule().fill(VipleMailPalette.success))
+                        .fixedSize()
                 }
                 Text(friend.email)
-                    .font(.system(size: 12.5, weight: .semibold))
+                    .font(.system(size: compact ? 11.5 : 12.5, weight: .semibold))
                     .foregroundStyle(VipleMailPalette.primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
 
-            Spacer()
+            Spacer(minLength: 4)
 
-            HStack(spacing: 7) {
+            HStack(spacing: compact ? 5 : 7) {
                 Button {
                     Task {
                         await vm.startVisioCall(to: friend.email, peerDisplayName: friend.displayName, audioOnly: true)
                     }
                 } label: {
                     Image(systemName: "phone.fill")
-                        .font(.system(size: 14, weight: .bold))
+                        .font(.system(size: compact ? 12.5 : 14, weight: .bold))
                         .foregroundStyle(.white)
-                        .frame(width: 36, height: 36)
+                        .frame(width: btnDim, height: btnDim)
                         .background(Circle().fill(VipleMailPalette.success))
                 }
                 .accessibilityLabel("Appel classique audio")
@@ -241,9 +248,9 @@ public struct MailContactsView: View {
                     }
                 } label: {
                     Image(systemName: "video.fill")
-                        .font(.system(size: 14, weight: .bold))
+                        .font(.system(size: compact ? 12.5 : 14, weight: .bold))
                         .foregroundStyle(.white)
-                        .frame(width: 36, height: 36)
+                        .frame(width: btnDim, height: btnDim)
                         .background(Circle().fill(VipleMailPalette.indigo))
                 }
                 .accessibilityLabel("Appel Viple Visio")
@@ -254,9 +261,9 @@ public struct MailContactsView: View {
                     }
                 } label: {
                     Image(systemName: "bubble.left.and.bubble.right.fill")
-                        .font(.system(size: 13.5, weight: .bold))
+                        .font(.system(size: compact ? 12 : 13.5, weight: .bold))
                         .foregroundStyle(VipleMailPalette.primary)
-                        .frame(width: 34, height: 36)
+                        .frame(width: btnDim, height: btnDim)
                         .background(Circle().fill(VipleMailPalette.primary.opacity(0.12)))
                 }
 
@@ -273,13 +280,13 @@ public struct MailContactsView: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis")
-                        .font(.system(size: 14, weight: .bold))
+                        .font(.system(size: compact ? 13 : 14, weight: .bold))
                         .foregroundStyle(VipleMailPalette.inkSecondary)
-                        .frame(width: 28, height: 36)
+                        .frame(width: compact ? 24 : 28, height: btnDim)
                 }
             }
         }
-        .vipleMailCard(cornerRadius: 18, padding: 13)
+        .vipleMailCard(cornerRadius: 18, padding: compact ? 11 : 13)
     }
 
     private var contactsSectionView: some View {
@@ -340,17 +347,21 @@ public struct MailContactsView: View {
     }
 
     private var contactsHeader: some View {
-        VStack(spacing: 10) {
-            HStack {
+        let compact = VipleMailLayout.isCompactPhone
+        return VStack(spacing: compact ? 8 : 10) {
+            HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Amis & Contacts")
-                        .font(.system(size: 22, weight: .black, design: .rounded))
+                        .font(.system(size: compact ? 19 : 22, weight: .black, design: .rounded))
                         .foregroundStyle(VipleMailPalette.ink)
-                    Text("Amis Viple Live (Appels Visio) & Carnet d'adresses")
-                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                    Text("Amis Viple Live (Visio) & Carnet d'adresses")
+                        .font(.system(size: compact ? 11 : 12, weight: .medium))
                         .foregroundStyle(VipleMailPalette.inkSecondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                 }
-                Spacer()
+                Spacer(minLength: 4)
                 Menu {
                     Button {
                         addFriendHandleOrEmail = ""
@@ -366,10 +377,12 @@ public struct MailContactsView: View {
                     }
                 } label: {
                     Label("Ajouter", systemImage: "person.badge.plus")
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .font(.system(size: compact ? 12 : 13, weight: .bold, design: .rounded))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                         .foregroundStyle(.white)
-                        .padding(.horizontal, 13)
-                        .padding(.vertical, 8)
+                        .padding(.horizontal, compact ? 11 : 13)
+                        .padding(.vertical, compact ? 7 : 8)
                         .background(Capsule().fill(VipleMailPalette.primary))
                 }
             }
@@ -423,57 +436,66 @@ public struct MailContactsView: View {
     }
 
     private func contactCard(_ contact: VipleMailContact) -> some View {
-        HStack(spacing: 14) {
+        let compact = VipleMailLayout.isCompactPhone
+        let btnDim: CGFloat = compact ? 31 : 36
+        return HStack(spacing: compact ? 9 : 14) {
             VipleMailAvatarView(
                 name: contact.displayName,
                 email: contact.contactEmail,
                 avatarUrl: vm.resolveAvatarUrl(for: contact.contactEmail, explicitUrl: contact.avatarUrl),
-                size: 48,
+                size: compact ? 38 : 48,
                 isVip: contact.isFavorite
             )
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: 2.5) {
+                HStack(spacing: 5) {
                     Text(contact.displayName)
-                        .font(.system(size: 15.5, weight: .bold, design: .rounded))
+                        .font(.system(size: compact ? 14 : 15.5, weight: .bold, design: .rounded))
                         .foregroundStyle(VipleMailPalette.ink)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
                     if contact.isFavorite {
                         Text("VIP")
-                            .font(.system(size: 9.5, weight: .black, design: .rounded))
+                            .font(.system(size: 9, weight: .black, design: .rounded))
                             .foregroundStyle(.white)
-                            .padding(.horizontal, 6)
+                            .padding(.horizontal, 5)
                             .padding(.vertical, 2)
                             .background(Capsule().fill(VipleMailPalette.vipGold))
+                            .fixedSize()
                     }
                 }
                 Text(contact.contactEmail)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: compact ? 11.5 : 13, weight: .semibold))
                     .foregroundStyle(VipleMailPalette.primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
 
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     Text(contact.groupName)
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: 10.5, weight: .bold))
                         .foregroundStyle(VipleMailPalette.inkMuted)
+                        .lineLimit(1)
                     if !contact.company.isEmpty {
                         Text("• \(contact.company)")
-                            .font(.system(size: 11))
+                            .font(.system(size: 10.5))
                             .foregroundStyle(VipleMailPalette.inkMuted)
+                            .lineLimit(1)
                     }
                 }
             }
 
-            Spacer()
+            Spacer(minLength: 4)
 
-            HStack(spacing: 8) {
+            HStack(spacing: compact ? 5 : 8) {
                 Button {
                     Task {
                         await vm.toggleContactVip(contact)
                     }
                 } label: {
                     Image(systemName: contact.isFavorite ? "crown.fill" : "crown")
-                        .font(.system(size: 16, weight: .bold))
+                        .font(.system(size: compact ? 13.5 : 16, weight: .bold))
                         .foregroundStyle(contact.isFavorite ? VipleMailPalette.vipGold : VipleMailPalette.inkMuted)
-                        .frame(width: 36, height: 36)
+                        .frame(width: btnDim, height: btnDim)
                         .background(Circle().fill(VipleMailPalette.surfaceSubtle))
                 }
 
@@ -487,9 +509,9 @@ public struct MailContactsView: View {
                         }
                     } label: {
                         Image(systemName: "bubble.left.and.bubble.right.fill")
-                            .font(.system(size: 14, weight: .bold))
+                            .font(.system(size: compact ? 12 : 14, weight: .bold))
                             .foregroundStyle(.white)
-                            .frame(width: 36, height: 36)
+                            .frame(width: btnDim, height: btnDim)
                             .background(Circle().fill(VipleMailPalette.primary))
                     }
                     .accessibilityLabel("Démarrer un Chat")
@@ -502,9 +524,9 @@ public struct MailContactsView: View {
                     ))
                 } label: {
                     Image(systemName: "envelope.fill")
-                        .font(.system(size: 15, weight: .bold))
+                        .font(.system(size: compact ? 13 : 15, weight: .bold))
                         .foregroundStyle(isInternalChatPeer ? VipleMailPalette.primary : .white)
-                        .frame(width: 36, height: 36)
+                        .frame(width: btnDim, height: btnDim)
                         .background(
                             Circle().fill(
                                 isInternalChatPeer
@@ -531,13 +553,13 @@ public struct MailContactsView: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis")
-                        .font(.system(size: 15, weight: .bold))
+                        .font(.system(size: compact ? 13.5 : 15, weight: .bold))
                         .foregroundStyle(VipleMailPalette.inkSecondary)
-                        .frame(width: 32, height: 36)
+                        .frame(width: compact ? 24 : 32, height: btnDim)
                 }
             }
         }
-        .vipleMailCard(cornerRadius: 18, padding: 14)
+        .vipleMailCard(cornerRadius: 18, padding: compact ? 11 : 14)
     }
 
     private var emptyContactsView: some View {

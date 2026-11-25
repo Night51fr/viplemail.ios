@@ -92,18 +92,22 @@ public struct MailChatView: View {
     // MARK: - En-tête Onglet Chat
 
     private var chatHeaderBar: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 10) {
+        let compact = VipleMailLayout.isCompactPhone
+        return VStack(spacing: compact ? 8 : 10) {
+            HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Chat")
-                        .font(.system(size: 22, weight: .black, design: .rounded))
+                        .font(.system(size: compact ? 19 : 22, weight: .black, design: .rounded))
                         .foregroundStyle(VipleMailPalette.ink)
-                    Text("Discussions instantanées @viplemail.fr & @cenelis.com")
-                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                    Text("Discussions @viplemail.fr & @cenelis.com")
+                        .font(.system(size: compact ? 11 : 12, weight: .medium))
                         .foregroundStyle(VipleMailPalette.inkSecondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                 }
 
-                Spacer()
+                Spacer(minLength: 4)
 
                 Button {
                     newChatAddress = ""
@@ -111,10 +115,12 @@ public struct MailChatView: View {
                     isShowingNewChatSheet = true
                 } label: {
                     Label("Nouveau chat", systemImage: "plus.bubble.fill")
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .font(.system(size: compact ? 12 : 13, weight: .bold, design: .rounded))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                         .foregroundStyle(.white)
-                        .padding(.horizontal, 13)
-                        .padding(.vertical, 8)
+                        .padding(.horizontal, compact ? 11 : 13)
+                        .padding(.vertical, compact ? 7 : 8)
                         .background(Capsule().fill(VipleMailPalette.primary))
                 }
             }

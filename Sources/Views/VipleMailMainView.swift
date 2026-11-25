@@ -250,12 +250,11 @@ public struct VipleMailMainView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                // Couche 2 : Lecture d'un courrier classique plein espace
+                // Couche 2 : Lecture d'un courrier classique plein espace (sans recréer la NavigationStack lors du swipe entre mails)
                 if vm.selectedTab == 0, let openedMsg = vm.openedMessage {
                     NavigationStack {
                         MessageDetailView(message: openedMsg)
                     }
-                    .id(openedMsg.id)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(VipleMailPalette.surface)
                     .transition(.asymmetric(
@@ -285,23 +284,24 @@ public struct VipleMailMainView: View {
                     Button {
                         vm.presentComposer(.newMail())
                     } label: {
-                        HStack(spacing: 8) {
+                        HStack(spacing: VipleMailLayout.isCompactPhone ? 6 : 8) {
                             Image(systemName: "square.and.pencil")
-                                .font(.system(size: 17, weight: .bold))
+                                .font(.system(size: VipleMailLayout.isCompactPhone ? 15 : 17, weight: .bold))
                             Text("Nouveau")
-                                .font(.system(size: 15, weight: .bold, design: .rounded))
+                                .font(.system(size: VipleMailLayout.isCompactPhone ? 13.5 : 15, weight: .bold, design: .rounded))
+                                .lineLimit(1)
                         }
                         .foregroundStyle(.white)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 14)
+                        .padding(.horizontal, VipleMailLayout.isCompactPhone ? 15 : 18)
+                        .padding(.vertical, VipleMailLayout.isCompactPhone ? 11 : 14)
                         .background(
                             Capsule()
                                 .fill(VipleMailPalette.heroGradient)
                                 .shadow(color: VipleMailPalette.primary.opacity(0.42), radius: 14, x: 0, y: 7)
                         )
                     }
-                    .padding(.trailing, 20)
-                    .padding(.bottom, 18)
+                    .padding(.trailing, VipleMailLayout.isCompactPhone ? 14 : 20)
+                    .padding(.bottom, VipleMailLayout.isCompactPhone ? 12 : 18)
                     .transition(.scale.combined(with: .opacity))
                     .zIndex(20)
                 }
@@ -316,18 +316,19 @@ public struct VipleMailMainView: View {
     // MARK: - En-tête Signature Viple Mail (Logo Horizontal en Haut à Gauche + Boîte Active + Actions)
 
     private var topBrandHeaderBar: some View {
-        HStack(spacing: 10) {
-            VipleMailHorizontalLogoView(height: 36)
+        let compact = VipleMailLayout.isCompactPhone
+        return HStack(spacing: compact ? 6 : 10) {
+            VipleMailHorizontalLogoView(height: compact ? 29 : 36, showSubtitle: !compact)
 
-            Spacer()
+            Spacer(minLength: 4)
 
             Button {
                 vm.isShowingAcademyHelp = true
             } label: {
                 Image(systemName: "questionmark.circle.fill")
-                    .font(.system(size: 20, weight: .bold))
+                    .font(.system(size: compact ? 17.5 : 20, weight: .bold))
                     .foregroundStyle(Color(red: 0.078, green: 0.325, blue: 0.275))
-                    .frame(width: 36, height: 36)
+                    .frame(width: compact ? 31 : 36, height: compact ? 31 : 36)
                     .background(Circle().fill(VipleMailPalette.surfaceSubtle))
                     .overlay(Circle().stroke(VipleMailPalette.border, lineWidth: 1))
             }
@@ -456,8 +457,8 @@ public struct VipleMailMainView: View {
                 }
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, VipleMailLayout.isCompactPhone ? 12 : 16)
+        .padding(.vertical, VipleMailLayout.isCompactPhone ? 7 : 10)
         .background(
             VipleMailPalette.surface
                 .overlay(alignment: .bottom) {
@@ -477,8 +478,9 @@ public struct VipleMailMainView: View {
     }
 
     private func headerAccountPill(user: VipleMailUser, showDropdownChevron: Bool) -> some View {
-        HStack(spacing: 8) {
-            if vm.isGuestMailboxActive, let activeGrant = vm.activeGuestGrant {
+        let compact = VipleMailLayout.isCompactPhone
+        return HStack(spacing: compact ? 6 : 8) {
+            if vm.isGuestMailboxActive, let activeGrant = vm.activeGuestGrant, !compact {
                 GuestCountdownBadgeView(grant: activeGrant, compact: true, filledStyle: true) {
                     vm.pruneAndExitExpiredGuestMailboxes()
                 }
@@ -488,37 +490,40 @@ public struct VipleMailMainView: View {
                 Text(vm.isGuestMailboxActive
                      ? "Invité • \(vm.activeGuestGrant?.ownerDisplayName ?? vm.currentEmail)"
                      : (vm.isExternalMailboxActive ? (vm.activeExternalProviderName ?? user.displayName) : user.displayName))
-                    .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                    .font(.system(size: compact ? 11.5 : 12.5, weight: .bold, design: .rounded))
                     .foregroundStyle(VipleMailPalette.ink)
                     .lineLimit(1)
-                HStack(spacing: 4) {
+                HStack(spacing: 3) {
                     if !vm.isUnifiedInboxActive && vm.currentEmail.lowercased().hasSuffix("@cenelis.com") {
                         Image(systemName: "checkmark.seal.fill")
-                            .font(.system(size: 9.5, weight: .bold))
+                            .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(VipleMailPalette.primary)
                     }
                     Text(vm.activeMailboxDisplayLabel)
-                        .font(.system(size: 10.5, weight: .semibold))
+                        .font(.system(size: compact ? 9.5 : 10.5, weight: .semibold))
                         .foregroundStyle(VipleMailPalette.primary)
                         .lineLimit(1)
+                        .truncationMode(.middle)
                     if showDropdownChevron {
                         Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.system(size: 8.5, weight: .bold))
                             .foregroundStyle(VipleMailPalette.primary)
                     }
                 }
             }
+            .frame(maxWidth: compact ? 114 : 185, alignment: .trailing)
+
             VipleMailAvatarView(
                 name: user.displayName,
                 email: vm.isUnifiedInboxActive ? vm.primaryHostedEmail : vm.currentEmail,
                 avatarUrl: vm.isExternalMailboxActive ? nil : user.avatarUrl,
-                size: 34,
+                size: compact ? 29 : 34,
                 isVip: true
             )
         }
-        .padding(.leading, 10)
-        .padding(.trailing, 5)
-        .padding(.vertical, 5)
+        .padding(.leading, compact ? 8 : 10)
+        .padding(.trailing, compact ? 4 : 5)
+        .padding(.vertical, compact ? 4 : 5)
         .background(
             Capsule()
                 .fill(VipleMailPalette.surfaceSubtle)
@@ -529,15 +534,16 @@ public struct VipleMailMainView: View {
         )
     }
 
-    // MARK: - Barre de Navigation Inférieure Optimisée iOS
+    // MARK: - Barre de Navigation Inférieure Optimisée iOS (y compris iPhone SE 375pt)
 
     private var bottomNavigationBar: some View {
+        let compact = VipleMailLayout.isCompactPhone
         let todayEventsCount = vm.agendaEvents.filter { Calendar.current.isDateInToday($0.startDate) }.count
         let contactsBadge = vm.incomingFriendRequests.count > 0
             ? vm.incomingFriendRequests.count
             : vm.contacts.filter { $0.isFavorite }.count
 
-        return HStack(spacing: 2) {
+        return HStack(spacing: compact ? 0 : 2) {
             tabBarItem(
                 index: 0,
                 title: "Boîte",
@@ -575,9 +581,9 @@ public struct VipleMailMainView: View {
                 badge: 0
             )
         }
-        .padding(.horizontal, 6)
-        .padding(.top, 8)
-        .padding(.bottom, 6)
+        .padding(.horizontal, compact ? 2 : 6)
+        .padding(.top, compact ? 6 : 8)
+        .padding(.bottom, compact ? 4 : 6)
         .background(
             VipleMailPalette.surface
                 .overlay(alignment: .top) {
@@ -599,6 +605,7 @@ public struct VipleMailMainView: View {
 
     private func tabBarItem(index: Int, title: String, icon: String, badge: Int) -> some View {
         let isSelected = vm.selectedTab == index
+        let compact = VipleMailLayout.isCompactPhone
         return Button {
             withAnimation(.spring(response: 0.34, dampingFraction: 0.84)) {
                 vm.closeMessage()
@@ -606,12 +613,12 @@ public struct VipleMailMainView: View {
                 vm.selectedTab = index
             }
         } label: {
-            VStack(spacing: 4) {
+            VStack(spacing: compact ? 2.5 : 4) {
                 ZStack(alignment: .topTrailing) {
                     Image(systemName: icon)
-                        .font(.system(size: 18, weight: isSelected ? .bold : .medium))
+                        .font(.system(size: compact ? 16 : 18, weight: isSelected ? .bold : .medium))
                         .foregroundStyle(isSelected ? VipleMailPalette.primary : VipleMailPalette.inkMuted)
-                        .frame(width: 36, height: 25)
+                        .frame(width: compact ? 31 : 36, height: compact ? 22 : 25)
                         .background(
                             Capsule()
                                 .fill(isSelected ? VipleMailPalette.primary.opacity(0.14) : Color.clear)
@@ -619,22 +626,23 @@ public struct VipleMailMainView: View {
 
                     if badge > 0 {
                         Text(badge > 99 ? "99+" : "\(badge)")
-                            .font(.system(size: 9.5, weight: .black, design: .rounded))
+                            .font(.system(size: compact ? 8.5 : 9.5, weight: .black, design: .rounded))
                             .foregroundStyle(.white)
-                            .padding(.horizontal, 4.5)
+                            .padding(.horizontal, compact ? 4 : 4.5)
                             .padding(.vertical, 1.5)
                             .background(
                                 Capsule()
                                     .fill(index == 4 && vm.incomingFriendRequests.isEmpty ? VipleMailPalette.vipGold : VipleMailPalette.primary)
                             )
-                            .offset(x: 6, y: -4)
+                            .offset(x: compact ? 5 : 6, y: -4)
                     }
                 }
 
                 Text(title)
-                    .font(.system(size: 10, weight: isSelected ? .bold : .medium, design: .rounded))
+                    .font(.system(size: compact ? 9.2 : 10, weight: isSelected ? .bold : .medium, design: .rounded))
                     .foregroundStyle(isSelected ? VipleMailPalette.primary : VipleMailPalette.inkMuted)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.76)
             }
             .frame(maxWidth: .infinity)
         }

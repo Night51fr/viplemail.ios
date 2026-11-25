@@ -116,26 +116,54 @@ public struct VipleVisioCallRespondResponse: Codable, Sendable {
 
 public struct VipleVisioRoomPresentation: Identifiable, Equatable, Sendable {
     public let id: String
+    public let roomCode: String
     public let title: String
     public let peerName: String
+    public let peerEmail: String?
+    public let peerAvatarUrl: String?
     public let joinUrl: String
     public let isAudioOnly: Bool
     public let activeCallId: String?
 
     public init(
         id: String = UUID().uuidString,
+        roomCode: String? = nil,
         title: String,
         peerName: String,
-        joinUrl: String,
+        peerEmail: String? = nil,
+        peerAvatarUrl: String? = nil,
+        joinUrl: String = "",
         isAudioOnly: Bool,
         activeCallId: String? = nil
     ) {
         self.id = id
+        self.roomCode = Self.resolveRoomCode(explicit: roomCode, joinUrl: joinUrl, fallbackId: id)
         self.title = title
         self.peerName = peerName
+        self.peerEmail = peerEmail
+        self.peerAvatarUrl = peerAvatarUrl
         self.joinUrl = joinUrl
         self.isAudioOnly = isAudioOnly
         self.activeCallId = activeCallId
+    }
+
+    public static func resolveRoomCode(explicit: String?, joinUrl: String, fallbackId: String) -> String {
+        if let exp = explicit?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+           !exp.isEmpty {
+            return exp
+        }
+        if let url = URL(string: joinUrl) {
+            let parts = url.pathComponents.filter { $0 != "/" && !$0.isEmpty }
+            if let rIdx = parts.firstIndex(where: { $0.lowercased() == "r" || $0.lowercased() == "room" }),
+               rIdx + 1 < parts.count {
+                return parts[rIdx + 1].lowercased()
+            }
+            if let last = parts.last, !last.isEmpty {
+                return last.lowercased()
+            }
+        }
+        let cleaned = fallbackId.lowercased().filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
+        return cleaned.isEmpty ? "viple-room" : String(cleaned.prefix(48))
     }
 }
 

@@ -28,6 +28,8 @@ private struct VipleMailHTMLWebView: UIViewRepresentable {
     let htmlBody: String
     let renderDark: Bool
     @Binding var dynamicHeight: CGFloat
+    var onHorizontalDragChanged: ((CGFloat) -> Void)? = nil
+    var onHorizontalDragEnded: ((CGFloat, CGFloat) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -44,6 +46,11 @@ private struct VipleMailHTMLWebView: UIViewRepresentable {
         wv.scrollView.bounces = false
         wv.scrollView.showsHorizontalScrollIndicator = false
         wv.navigationDelegate = context.coordinator
+
+        let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleHorizontalPan(_:)))
+        pan.cancelsTouchesInView = false
+        pan.delegate = context.coordinator
+        wv.addGestureRecognizer(pan)
         return wv
     }
 
@@ -483,12 +490,40 @@ private struct VipleMailHTMLWebView: UIViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, UIGestureRecognizerDelegate {
         var parent: VipleMailHTMLWebView
         var lastLoadedHTML: String = ""
 
         init(_ parent: VipleMailHTMLWebView) {
             self.parent = parent
+        }
+
+        @objc func handleHorizontalPan(_ gesture: UIPanGestureRecognizer) {
+            guard let view = gesture.view else { return }
+            let translation = gesture.translation(in: view)
+            switch gesture.state {
+            case .changed:
+                parent.onHorizontalDragChanged?(translation.x)
+            case .ended, .cancelled, .failed:
+                parent.onHorizontalDragEnded?(translation.x, translation.y)
+            default:
+                break
+            }
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard let pan = gestureRecognizer as? UIPanGestureRecognizer, let view = pan.view else {
+                return true
+            }
+            let velocity = pan.velocity(in: view)
+            return abs(velocity.x) > abs(velocity.y) * 1.28
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            true
         }
 
         func applyMeasuredHeight(_ h: CGFloat) {
@@ -539,9 +574,21 @@ public struct MessageDetailView: View {
     @State private var forceOriginalLightEmail: Bool = false
     @State private var htmlContentHeight: CGFloat = 220
     @State private var pinUnlockedMessage: VipleMailMessage? = nil
+    @State private var horizontalSwipeOffset: CGFloat = 0
+    @State private var contentTransitionOpacity: Double = 1.0
+    @State private var nextOnRightSwipe: Bool = true
+    @State private var lastHorizontalSwitchTime: Date = .distantPast
 
     public init(message: VipleMailMessage) {
         self.message = message
+    }
+
+    private var isCompactScreen: Bool {
+        #if canImport(UIKit)
+        return UIScreen.main.bounds.width <= 385
+        #else
+        return false
+        #endif
     }
 
     private var effectiveRenderHtmlDark: Bool {
@@ -572,57 +619,89 @@ public struct MessageDetailView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            ScrollView(showsIndicators: true) {
-                VStack(alignment: .leading, spacing: 0) {
-                    classicSenderHeaderSection
+        ScrollViewReader { scrollProxy in
+            VStack(spacing: 0) {
+                ScrollView(showsIndicators: true) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Color.clear
+                            .frame(height: 0)
+                            .id("mailReaderTopAnchor")
 
-                    Divider()
-                        .padding(.leading, 16)
+                        classicSenderHeaderSection
 
-                    classicSubjectHeaderSection
-
-                    if !currentMessage.attachments.isEmpty {
                         Divider()
                             .padding(.leading, 16)
-                        classicAttachmentsSection(currentMessage.attachments)
-                    }
 
-                    Divider()
+                        classicSubjectHeaderSection
 
-                    if !currentMessage.isLockedByCenelisPin {
-                        let parsedInvites = VipleCalendarParser.extractInvites(
-                            fromPlain: currentMessage.plainBodyText,
-                            html: currentMessage.bodyHtml,
-                            defaultTitle: currentMessage.subject,
-                            organizerEmail: currentMessage.senderEmail,
-                            organizerName: currentMessage.senderName,
-                            messageId: currentMessage.id
-                        )
-                        if !parsedInvites.isEmpty {
-                            VStack(spacing: 10) {
-                                ForEach(parsedInvites) { inv in
-                                    VipleCalendarMailInviteCardView(invite: inv)
+                        if !currentMessage.attachments.isEmpty {
+                            Divider()
+                                .padding(.leading, 16)
+                            classicAttachmentsSection(currentMessage.attachments)
+                        }
+
+                        Divider()
+
+                        if !currentMessage.isLockedByCenelisPin {
+                            let parsedInvites = VipleCalendarParser.extractInvites(
+                                fromPlain: currentMessage.plainBodyText,
+                                html: currentMessage.bodyHtml,
+                                defaultTitle: currentMessage.subject,
+                                organizerEmail: currentMessage.senderEmail,
+                                organizerName: currentMessage.senderName,
+                                messageId: currentMessage.id
+                            )
+                            if !parsedInvites.isEmpty {
+                                VStack(spacing: 10) {
+                                    ForEach(parsedInvites) { inv in
+                                        VipleCalendarMailInviteCardView(invite: inv)
+                                    }
                                 }
+                                .padding(.horizontal, isCompactScreen ? 12 : 16)
+                                .padding(.top, 12)
                             }
-                            .padding(.horizontal, 16)
-                            .padding(.top, 12)
+                        }
+
+                        classicEmailBodySection(currentMessage)
+
+                        if !previousEmailsInThread.isEmpty {
+                            Divider()
+                                .padding(.top, 12)
+                            classicQuotedThreadSection
                         }
                     }
-
-                    classicEmailBodySection(currentMessage)
-
-                    if !previousEmailsInThread.isEmpty {
-                        Divider()
-                            .padding(.top, 12)
-                        classicQuotedThreadSection
-                    }
+                    .background(VipleMailPalette.surface)
+                    .offset(x: horizontalSwipeOffset)
+                    .opacity(contentTransitionOpacity)
                 }
                 .background(VipleMailPalette.surface)
-            }
-            .background(VipleMailPalette.surface)
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 22, coordinateSpace: .local)
+                        .onChanged { value in
+                            handleHorizontalDragProgress(
+                                dx: value.translation.width,
+                                dy: value.translation.height
+                            )
+                        }
+                        .onEnded { value in
+                            handleHorizontalDragCompletion(
+                                dx: value.translation.width,
+                                dy: value.translation.height,
+                                scrollProxy: scrollProxy
+                            )
+                        }
+                )
 
-            classicMailBottomToolbar
+                classicMailBottomToolbar
+            }
+            .onChange(of: message.id) { _, _ in
+                showFullHeaders = false
+                showPreviousThreadEmails = false
+                forceOriginalLightEmail = false
+                pinUnlockedMessage = nil
+                htmlContentHeight = 220
+                scrollProxy.scrollTo("mailReaderTopAnchor", anchor: .top)
+            }
         }
         .background(VipleMailPalette.surface.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
@@ -645,13 +724,52 @@ public struct MessageDetailView: View {
                 Button {
                     vm.closeMessage()
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 3) {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 15, weight: .semibold))
-                        Text(vm.activeFolderTitle)
-                            .font(.system(size: 15.5, weight: .regular))
+                            .font(.system(size: 14.5, weight: .semibold))
+                        Text(isCompactScreen ? "Boîte" : vm.activeFolderTitle)
+                            .font(.system(size: isCompactScreen ? 14 : 15.5, weight: .regular))
                             .lineLimit(1)
                     }
+                    .frame(maxWidth: isCompactScreen ? 84 : 150, alignment: .leading)
+                }
+            }
+
+            ToolbarItem(placement: .principal) {
+                if let pos = vm.readerPosition(for: currentMessage), pos.total > 1 {
+                    let prevMsg = vm.adjacentReaderMessage(from: currentMessage, delta: -1)
+                    let nextMsg = vm.adjacentReaderMessage(from: currentMessage, delta: 1)
+                    HStack(spacing: isCompactScreen ? 5 : 8) {
+                        Button {
+                            if let prevMsg {
+                                animateSwitchToAdjacentMail(prevMsg, slideDirection: -1)
+                            }
+                        } label: {
+                            Image(systemName: "chevron.up")
+                                .font(.system(size: 11.5, weight: .bold))
+                                .frame(width: 24, height: 24)
+                        }
+                        .disabled(prevMsg == nil)
+
+                        Text("\(pos.index + 1)/\(pos.total)")
+                            .font(.system(size: 11.5, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(VipleMailPalette.inkSecondary)
+
+                        Button {
+                            if let nextMsg {
+                                animateSwitchToAdjacentMail(nextMsg, slideDirection: 1)
+                            }
+                        } label: {
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 11.5, weight: .bold))
+                                .frame(width: 24, height: 24)
+                        }
+                        .disabled(nextMsg == nil)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(VipleMailPalette.surfaceSubtle))
                 }
             }
 
@@ -889,16 +1007,92 @@ public struct MessageDetailView: View {
         .sheet(isPresented: $isShowingMoveFolderSheet) {
             moveToFolderPickerSheet
         }
-        .gesture(
-            DragGesture(minimumDistance: 24, coordinateSpace: .local)
-                .onEnded { value in
-                    if value.startLocation.x < 44 && value.translation.width > 70 && abs(value.translation.height) < 90 {
-                        vm.closeMessage()
-                    }
-                }
-        )
-        .task {
+        .task(id: message.id) {
             await vm.openMessageAndLoadThread(message)
+        }
+    }
+
+    // MARK: - Navigation Horizontale Directe Entre les Mails (Sans Retour à la Liste)
+
+    private func handleHorizontalDragProgress(dx: CGFloat, dy: CGFloat = 0) {
+        guard abs(dx) > 16, abs(dx) > abs(dy) * 1.28 else { return }
+        let damped = max(-72, min(72, dx * 0.36))
+        horizontalSwipeOffset = damped
+    }
+
+    private func handleHorizontalDragCompletion(dx: CGFloat, dy: CGFloat, scrollProxy: ScrollViewProxy? = nil) {
+        let now = Date()
+        guard now.timeIntervalSince(lastHorizontalSwitchTime) > 0.28 else {
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                horizontalSwipeOffset = 0
+            }
+            return
+        }
+
+        guard abs(dx) > 52, abs(dx) > abs(dy) * 1.25 else {
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                horizontalSwipeOffset = 0
+            }
+            return
+        }
+
+        let swipedRight = dx > 0
+        var delta: Int
+        if nextOnRightSwipe {
+            delta = swipedRight ? 1 : -1
+        } else {
+            delta = swipedRight ? -1 : 1
+        }
+
+        // Adaptation intelligente : si l'utilisateur est sur le tout 1er courrier (index 0) et balaie dans l'autre sens,
+        // on adapte la convention pour sa session afin d'avancer directement au courrier suivant sans blocage.
+        if vm.adjacentReaderMessage(from: currentMessage, delta: delta) == nil,
+           let pos = vm.readerPosition(for: currentMessage),
+           pos.index == 0,
+           pos.total > 1,
+           delta == -1 {
+            nextOnRightSwipe.toggle()
+            delta = 1
+        }
+
+        guard let target = vm.adjacentReaderMessage(from: currentMessage, delta: delta) else {
+            // Rebond élastique discret en bout de liste (sans jamais fermer vers la liste des mails)
+            #if canImport(UIKit)
+            UIImpactFeedbackGenerator(style: .rigid).impactOccurred(intensity: 0.45)
+            #endif
+            withAnimation(.spring(response: 0.26, dampingFraction: 0.72)) {
+                horizontalSwipeOffset = 0
+            }
+            return
+        }
+
+        lastHorizontalSwitchTime = now
+        animateSwitchToAdjacentMail(target, slideDirection: swipedRight ? 1 : -1, scrollProxy: scrollProxy)
+    }
+
+    private func animateSwitchToAdjacentMail(
+        _ target: VipleMailMessage,
+        slideDirection: CGFloat,
+        scrollProxy: ScrollViewProxy? = nil
+    ) {
+        #if canImport(UIKit)
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        #endif
+
+        withAnimation(.easeOut(duration: 0.11)) {
+            horizontalSwipeOffset = slideDirection * 48
+            contentTransitionOpacity = 0.15
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 105_000_000)
+            vm.switchReaderDirectly(to: target)
+            scrollProxy?.scrollTo("mailReaderTopAnchor", anchor: .top)
+            horizontalSwipeOffset = -slideDirection * 38
+            withAnimation(.spring(response: 0.26, dampingFraction: 0.86)) {
+                horizontalSwipeOffset = 0
+                contentTransitionOpacity = 1.0
+            }
         }
     }
 
@@ -1246,7 +1440,13 @@ public struct MessageDetailView: View {
                     VipleMailHTMLWebView(
                         htmlBody: msg.bodyHtml,
                         renderDark: false,
-                        dynamicHeight: $htmlContentHeight
+                        dynamicHeight: $htmlContentHeight,
+                        onHorizontalDragChanged: { dx in
+                            handleHorizontalDragProgress(dx: dx)
+                        },
+                        onHorizontalDragEnded: { dx, dy in
+                            handleHorizontalDragCompletion(dx: dx, dy: dy)
+                        }
                     )
                     .frame(height: htmlContentHeight)
                     .padding(12)
@@ -1262,7 +1462,13 @@ public struct MessageDetailView: View {
                     VipleMailHTMLWebView(
                         htmlBody: msg.bodyHtml,
                         renderDark: effectiveRenderHtmlDark,
-                        dynamicHeight: $htmlContentHeight
+                        dynamicHeight: $htmlContentHeight,
+                        onHorizontalDragChanged: { dx in
+                            handleHorizontalDragProgress(dx: dx)
+                        },
+                        onHorizontalDragEnded: { dx, dy in
+                            handleHorizontalDragCompletion(dx: dx, dy: dy)
+                        }
                     )
                     .frame(height: htmlContentHeight)
                 }

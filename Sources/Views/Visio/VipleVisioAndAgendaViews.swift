@@ -1,164 +1,623 @@
 import SwiftUI
-import WebKit
 #if canImport(UIKit)
 import UIKit
 import AVFoundation
 #endif
 
-// MARK: - 1. Studio WebRTC Embarqué « Viple Visio » (Appel Classique Audio & Appel Vidéo HD)
+// MARK: - 1. Studio d'Appel Audio & Vidéo 100 % Natif iOS « Viple Visio » (Zéro WebView)
 
-#if canImport(UIKit)
-private struct VipleVisioWebViewRepresentable: UIViewRepresentable {
-    let joinUrlString: String
-    let onHangup: () -> Void
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onHangup: onHangup)
-    }
-
-    func makeUIView(context: Context) -> WKWebView {
-        let config = WKWebViewConfiguration()
-        config.allowsInlineMediaPlayback = true
-        config.mediaTypesRequiringUserActionForPlayback = []
-        config.userContentController.add(context.coordinator, name: "vipleVisio")
-
-        let wv = WKWebView(frame: .zero, configuration: config)
-        wv.uiDelegate = context.coordinator
-        wv.navigationDelegate = context.coordinator
-        wv.isOpaque = false
-        wv.backgroundColor = UIColor(red: 0.04, green: 0.06, blue: 0.10, alpha: 1.0)
-        wv.scrollView.backgroundColor = UIColor(red: 0.04, green: 0.06, blue: 0.10, alpha: 1.0)
-        wv.scrollView.contentInsetAdjustmentBehavior = .never
-
-        if let url = URL(string: joinUrlString) {
-            wv.load(URLRequest(url: url))
-        }
-        return wv
-    }
-
-    func updateUIView(_ uiView: WKWebView, context: Context) {
-        context.coordinator.onHangup = onHangup
-    }
-
-    static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
-        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "vipleVisio")
-        uiView.evaluateJavaScript("try { document.getElementById('ctl-leave')?.click(); } catch(e) {}", completionHandler: nil)
-        uiView.loadHTMLString("", baseURL: nil)
-    }
-
-    @MainActor
-    final class Coordinator: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler {
-        var onHangup: () -> Void
-
-        init(onHangup: @escaping () -> Void) {
-            self.onHangup = onHangup
-        }
-
-        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            if message.name == "vipleVisio" {
-                onHangup()
-            }
-        }
-
-        @available(iOS 15.0, *)
-        func webView(
-            _ webView: WKWebView,
-            requestMediaCapturePermissionFor origin: WKSecurityOrigin,
-            initiatedByFrame frame: WKFrameInfo,
-            type: WKMediaCaptureType,
-            decisionHandler: @escaping (WKPermissionDecision) -> Void
-        ) {
-            let host = origin.host.lowercased()
-            if host.hasSuffix("viple.digital") || host.hasSuffix("viplemail.fr") || host.hasSuffix("cenelis.com") {
-                decisionHandler(.grant)
-            } else {
-                decisionHandler(.prompt)
-            }
-        }
-
-        func webView(
-            _ webView: WKWebView,
-            decidePolicyFor navigationAction: WKNavigationAction,
-            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
-        ) {
-            if let url = navigationAction.request.url,
-               url.host?.lowercased() == "visio.prod.viple.digital",
-               (url.path == "" || url.path == "/") {
-                decisionHandler(.cancel)
-                onHangup()
-                return
-            }
-            decisionHandler(.allow)
-        }
-    }
-}
-#endif
-
-public struct VipleVisioWebRTCStudioView: View {
+public struct NativeVipleVisioCallStudioView: View {
     @EnvironmentObject private var vm: VipleMailViewModel
     public let session: VipleVisioRoomPresentation
 
+    @StateObject private var engine: NativeVipleVisioEngine
+    @State private var pipOffset: CGSize = .zero
+    @State private var pipSavedOffset: CGSize = .zero
+
+    public init(
+        session: VipleVisioRoomPresentation,
+        localEmail: String,
+        localDisplayName: String
+    ) {
+        self.session = session
+        _engine = StateObject(
+            wrappedValue: NativeVipleVisioEngine(
+                roomCode: session.roomCode,
+                localEmail: localEmail,
+                localDisplayName: localDisplayName,
+                initialAudioOnly: session.isAudioOnly,
+                isDirectOneToOneCall: session.activeCallId != nil
+            )
+        )
+    }
+
+    private var isCompactScreen: Bool {
+        #if canImport(UIKit)
+        return UIScreen.main.bounds.width <= 385 || UIScreen.main.bounds.height <= 700
+        #else
+        return false
+        #endif
+    }
+
+    private var isShowingVideoStage: Bool {
+        engine.isVideoEnabled || engine.peers.contains(where: { $0.videoEnabled })
+    }
+
+    private var primaryPeer: NativeVisioPeer? {
+        engine.peers.first
+    }
+
+    private var resolvedPeerName: String {
+        if let p = primaryPeer, !p.displayName.isEmpty {
+            return p.displayName
+        }
+        return session.peerName
+    }
+
+    private var resolvedPeerEmail: String {
+        if let p = primaryPeer, !p.email.isEmpty {
+            return p.email
+        }
+        return session.peerEmail ?? ""
+    }
+
+    private var resolvedPeerAvatarUrl: String? {
+        if let p = primaryPeer, let av = p.avatarUrl, !av.isEmpty {
+            return av
+        }
+        return session.peerAvatarUrl
+    }
+
+    private var statusSubtitle: String {
+        switch engine.phase {
+        case .connecting:
+            return "Connexion native sécurisée…"
+        case .reconnecting:
+            return "Reconnexion temps réel…"
+        case .ended:
+            return "Appel terminé"
+        case .connected:
+            if engine.peers.isEmpty {
+                return session.activeCallId != nil
+                    ? "En attente du correspondant…"
+                    : "Salon prêt • En attente des participants"
+            }
+            return engine.formattedDuration
+        }
+    }
+
     public var body: some View {
-        ZStack(alignment: .top) {
-            Color(red: 0.04, green: 0.06, blue: 0.10)
+        GeometryReader { geo in
+            ZStack {
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.03, green: 0.06, blue: 0.14),
+                        Color(red: 0.05, green: 0.13, blue: 0.27),
+                        Color(red: 0.02, green: 0.04, blue: 0.09)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
                 .ignoresSafeArea()
 
-            #if canImport(UIKit)
-            VipleVisioWebViewRepresentable(joinUrlString: session.joinUrl) {
-                Task {
+                if isShowingVideoStage {
+                    videoCallStage(in: geo.size)
+                } else {
+                    classicAudioCallStage
+                }
+
+                VStack(spacing: 0) {
+                    topNativeCallHeader
+                    if engine.micPermissionDenied || engine.cameraPermissionDenied {
+                        permissionWarningBanner
+                            .padding(.top, 6)
+                    }
+                    Spacer()
+                    bottomNativeControlDock
+                }
+                .padding(.horizontal, isCompactScreen ? 12 : 18)
+                .padding(.top, isCompactScreen ? 8 : 12)
+                .padding(.bottom, isCompactScreen ? 16 : 28)
+
+                #if canImport(UIKit)
+                if engine.isVideoEnabled {
+                    let pipW: CGFloat = isCompactScreen ? 92 : 110
+                    let pipH: CGFloat = isCompactScreen ? 128 : 154
+                    VStack {
+                        HStack {
+                            Spacer()
+                            ZStack(alignment: .bottomTrailing) {
+                                NativeCameraPreviewView(session: engine.localCaptureSession)
+                                    .frame(width: pipW, height: pipH)
+                                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                            .stroke(
+                                                engine.localVoiceLevel > 0.08
+                                                    ? Color(red: 0.22, green: 0.90, blue: 0.62)
+                                                    : Color.white.opacity(0.28),
+                                                lineWidth: engine.localVoiceLevel > 0.08 ? 2.2 : 1.2
+                                            )
+                                    )
+                                    .shadow(color: .black.opacity(0.45), radius: 12, x: 0, y: 6)
+
+                                Button {
+                                    engine.flipCamera()
+                                } label: {
+                                    Image(systemName: "camera.rotate.fill")
+                                        .font(.system(size: 11, weight: .bold))
+                                        .foregroundStyle(.white)
+                                        .frame(width: 26, height: 26)
+                                        .background(Circle().fill(Color.black.opacity(0.62)))
+                                }
+                                .padding(6)
+                            }
+                            .offset(pipOffset)
+                            .gesture(
+                                DragGesture()
+                                    .onChanged { val in
+                                        pipOffset = CGSize(
+                                            width: pipSavedOffset.width + val.translation.width,
+                                            height: pipSavedOffset.height + val.translation.height
+                                        )
+                                    }
+                                    .onEnded { _ in
+                                        pipSavedOffset = pipOffset
+                                    }
+                            )
+                        }
+                        Spacer()
+                    }
+                    .padding(.top, isCompactScreen ? 64 : 74)
+                    .padding(.horizontal, isCompactScreen ? 12 : 16)
+                }
+                #endif
+            }
+        }
+        .task {
+            engine.onRemotePeerHangup = {
+                Task { @MainActor in
                     await vm.closeActiveVisioRoom()
                 }
             }
-            .ignoresSafeArea(edges: .bottom)
-            .padding(.top, 56)
-            #endif
+            await engine.start()
+        }
+        .onDisappear {
+            engine.disconnect(sendHangupSignal: true)
+        }
+    }
 
-            HStack(spacing: 10) {
-                HStack(spacing: 7) {
-                    Image(systemName: session.isAudioOnly ? "phone.waveform.fill" : "video.fill")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(Color(red: 0.22, green: 0.85, blue: 0.62))
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(session.title)
-                            .font(.system(size: 13.5, weight: .bold, design: .rounded))
-                            .foregroundStyle(.white)
-                            .lineLimit(1)
-                        Text("\(session.peerName) • Chiffré DTLS-SRTP")
-                            .font(.system(size: 10.5, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.72))
-                            .lineLimit(1)
-                    }
+    // MARK: - Barre Supérieure Native
+
+    private var topNativeCallHeader: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(engine.phase == .connected
+                          ? Color(red: 0.20, green: 0.90, blue: 0.58)
+                          : Color.orange)
+                    .frame(width: 7, height: 7)
+
+                Image(systemName: isShowingVideoStage ? "video.fill" : "phone.waveform.fill")
+                    .font(.system(size: 11.5, weight: .bold))
+                    .foregroundStyle(Color(red: 0.38, green: 0.86, blue: 1.0))
+
+                Text(isShowingVideoStage ? "Viple Visio Natif" : "Appel Viple Natif")
+                    .font(.system(size: isCompactScreen ? 12 : 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 6)
+            .background(Capsule().fill(Color.black.opacity(0.42)))
+            .overlay(Capsule().stroke(Color.white.opacity(0.14), lineWidth: 0.8))
+
+            Spacer(minLength: 4)
+
+            if session.activeCallId == nil {
+                Text("#\(session.roomCode)")
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.82))
+                    .lineLimit(1)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.white.opacity(0.10)))
+            }
+
+            HStack(spacing: 4) {
+                Image(systemName: "lock.shield.fill")
+                    .font(.system(size: 10.5, weight: .bold))
+                    .foregroundStyle(Color(red: 0.25, green: 0.90, blue: 0.65))
+                Text("TLS 1.3")
+                    .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.88))
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(Color.black.opacity(0.38)))
+        }
+    }
+
+    private var permissionWarningBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.yellow)
+                .font(.system(size: 13, weight: .bold))
+            Text(engine.micPermissionDenied
+                 ? "Accès micro désactivé dans Réglages iOS > Viple Mail."
+                 : "Accès caméra désactivé dans Réglages iOS > Viple Mail.")
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(.white)
+                .lineLimit(2)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.red.opacity(0.38)))
+    }
+
+    // MARK: - Scène Appel Classique Audio (100 % Natif style Téléphone / FaceTime Audio)
+
+    private var classicAudioCallStage: some View {
+        let avatarSize: CGFloat = isCompactScreen ? 96 : 118
+        let remoteSpeaking = primaryPeer?.isSpeaking == true
+        let activeLevel = max(engine.localVoiceLevel, remoteSpeaking ? 0.65 : 0.0)
+
+        return VStack(spacing: isCompactScreen ? 16 : 24) {
+            Spacer(minLength: isCompactScreen ? 54 : 72)
+
+            ZStack {
+                Circle()
+                    .stroke(Color.cyan.opacity(0.18 + Double(activeLevel) * 0.35), lineWidth: 2)
+                    .frame(
+                        width: avatarSize + 44 + activeLevel * 28,
+                        height: avatarSize + 44 + activeLevel * 28
+                    )
+                    .animation(.easeOut(duration: 0.16), value: activeLevel)
+
+                Circle()
+                    .fill(Color(red: 0.16, green: 0.62, blue: 0.98).opacity(0.14 + Double(activeLevel) * 0.22))
+                    .frame(
+                        width: avatarSize + 20 + activeLevel * 16,
+                        height: avatarSize + 20 + activeLevel * 16
+                    )
+                    .animation(.easeOut(duration: 0.16), value: activeLevel)
+
+                VipleMailAvatarView(
+                    name: resolvedPeerName,
+                    email: resolvedPeerEmail,
+                    avatarUrl: resolvedPeerAvatarUrl,
+                    size: avatarSize,
+                    isVip: true
+                )
+            }
+
+            VStack(spacing: 5) {
+                Text(resolvedPeerName)
+                    .font(.system(size: isCompactScreen ? 23 : 28, weight: .black, design: .rounded))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+
+                if !resolvedPeerEmail.isEmpty {
+                    Text(resolvedPeerEmail)
+                        .font(.system(size: isCompactScreen ? 12.5 : 14, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.70))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                 }
 
-                Spacer()
+                Text(statusSubtitle)
+                    .font(.system(size: isCompactScreen ? 14 : 16, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(Color(red: 0.38, green: 0.88, blue: 1.0))
+                    .padding(.top, 4)
 
-                Button {
-                    Task {
-                        await vm.closeActiveVisioRoom()
-                    }
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "phone.down.fill")
-                            .font(.system(size: 13, weight: .bold))
-                        Text("Quitter")
-                            .font(.system(size: 12.5, weight: .bold, design: .rounded))
-                    }
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 8)
-                    .background(Capsule().fill(Color(red: 0.90, green: 0.20, blue: 0.22)))
+                if let peer = primaryPeer, peer.audioMuted {
+                    Label("Micro coupé par le correspondant", systemImage: "mic.slash.fill")
+                        .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.orange)
+                        .padding(.top, 2)
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(Color.black.opacity(0.75))
+
+            if engine.peers.count > 1 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(engine.peers) { peer in
+                            VStack(spacing: 4) {
+                                VipleMailAvatarView(
+                                    name: peer.displayName,
+                                    email: peer.email,
+                                    avatarUrl: peer.avatarUrl,
+                                    size: 46,
+                                    isVip: false
+                                )
+                                .overlay(
+                                    Circle()
+                                        .stroke(peer.isSpeaking ? Color.green : Color.clear, lineWidth: 2.5)
+                                )
+                                Text(peer.displayName)
+                                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(.white)
+                                    .lineLimit(1)
+                                    .frame(maxWidth: 72)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                }
+            }
+
+            Spacer(minLength: isCompactScreen ? 86 : 110)
         }
-        .onAppear {
-            #if canImport(UIKit)
-            let audioSession = AVAudioSession.sharedInstance()
-            try? audioSession.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
-            try? audioSession.setActive(true)
-            #endif
+    }
+
+    // MARK: - Scène Appel Vidéo Temps Réel (100 % Natif iOS)
+
+    @ViewBuilder
+    private func videoCallStage(in size: CGSize) -> some View {
+        if engine.peers.isEmpty {
+            VStack(spacing: 12) {
+                ProgressView()
+                    .tint(.white)
+                    .scaleEffect(1.2)
+                Text(session.title)
+                    .font(.system(size: isCompactScreen ? 18 : 21, weight: .black, design: .rounded))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                Text(statusSubtitle)
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.76))
+            }
+            .padding(.horizontal, 24)
+        } else if engine.peers.count == 1, let peer = engine.peers.first {
+            ZStack {
+                #if canImport(UIKit)
+                if peer.videoEnabled, let frame = peer.latestVideoFrame {
+                    Image(uiImage: frame)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: size.width, height: size.height)
+                        .clipped()
+                        .ignoresSafeArea()
+                } else {
+                    remoteAudioOnlyFallbackTile(peer)
+                }
+                #else
+                remoteAudioOnlyFallbackTile(peer)
+                #endif
+
+                VStack {
+                    Spacer()
+                    HStack(spacing: 8) {
+                        if peer.audioMuted {
+                            Image(systemName: "mic.slash.fill")
+                                .font(.system(size: 11.5, weight: .bold))
+                                .foregroundStyle(.red)
+                        }
+                        Text(peer.displayName)
+                            .font(.system(size: 13.5, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                        Text("• \(engine.formattedDuration)")
+                            .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(.white.opacity(0.84))
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(Color.black.opacity(0.50)))
+                    .padding(.bottom, isCompactScreen ? 96 : 114)
+                }
+            }
+        } else {
+            let columns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
+            ScrollView(showsIndicators: false) {
+                LazyVGrid(columns: columns, spacing: 8) {
+                    ForEach(engine.peers) { peer in
+                        ZStack(alignment: .bottomLeading) {
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(Color.white.opacity(0.07))
+
+                            #if canImport(UIKit)
+                            if peer.videoEnabled, let frame = peer.latestVideoFrame {
+                                Image(uiImage: frame)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(height: isCompactScreen ? 185 : 225)
+                                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            } else {
+                                VStack(spacing: 8) {
+                                    VipleMailAvatarView(
+                                        name: peer.displayName,
+                                        email: peer.email,
+                                        avatarUrl: peer.avatarUrl,
+                                        size: 56
+                                    )
+                                    Text(peer.displayName)
+                                        .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                                        .foregroundStyle(.white)
+                                        .lineLimit(1)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .frame(height: isCompactScreen ? 185 : 225)
+                            }
+                            #endif
+
+                            HStack(spacing: 4) {
+                                if peer.audioMuted {
+                                    Image(systemName: "mic.slash.fill")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundStyle(.red)
+                                }
+                                Text(peer.displayName)
+                                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                                    .foregroundStyle(.white)
+                                    .lineLimit(1)
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(Color.black.opacity(0.55)))
+                            .padding(8)
+                        }
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(peer.isSpeaking ? Color.green : Color.white.opacity(0.14), lineWidth: peer.isSpeaking ? 2.2 : 1)
+                        )
+                    }
+                }
+                .padding(.top, isCompactScreen ? 62 : 74)
+                .padding(.bottom, isCompactScreen ? 100 : 120)
+                .padding(.horizontal, 12)
+            }
+        }
+    }
+
+    private func remoteAudioOnlyFallbackTile(_ peer: NativeVisioPeer) -> some View {
+        VStack(spacing: 14) {
+            VipleMailAvatarView(
+                name: peer.displayName,
+                email: peer.email,
+                avatarUrl: peer.avatarUrl,
+                size: isCompactScreen ? 88 : 108,
+                isVip: true
+            )
+            .overlay(
+                Circle()
+                    .stroke(peer.isSpeaking ? Color(red: 0.22, green: 0.90, blue: 0.62) : Color.clear, lineWidth: 3)
+                    .scaleEffect(peer.isSpeaking ? 1.08 : 1.0)
+                    .animation(.easeInOut(duration: 0.2), value: peer.isSpeaking)
+            )
+
+            Text(peer.displayName)
+                .font(.system(size: isCompactScreen ? 21 : 25, weight: .black, design: .rounded))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+
+            Text("Caméra désactivée • Audio actif")
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(.white.opacity(0.72))
+        }
+    }
+
+    // MARK: - Dock Inférieur de Contrôles Natifs (Optimisé iPhone SE 375pt)
+
+    private var bottomNativeControlDock: some View {
+        let btnSize: CGFloat = isCompactScreen ? 48 : 54
+        let spacing: CGFloat = isCompactScreen ? 10 : 16
+
+        return HStack(spacing: spacing) {
+            callControlButton(
+                icon: engine.isMuted ? "mic.slash.fill" : "mic.fill",
+                label: engine.isMuted ? "Réactiver" : "Muet",
+                isActive: engine.isMuted,
+                activeColor: .white,
+                activeForeground: .black,
+                size: btnSize
+            ) {
+                engine.toggleMute()
+            }
+
+            callControlButton(
+                icon: engine.isSpeakerphoneOn ? "speaker.wave.3.fill" : "ear",
+                label: engine.isSpeakerphoneOn ? "Haut-parl." : "Écouteur",
+                isActive: engine.isSpeakerphoneOn,
+                activeColor: Color.white.opacity(0.26),
+                activeForeground: .white,
+                size: btnSize
+            ) {
+                engine.toggleSpeakerphone()
+            }
+
+            callControlButton(
+                icon: engine.isVideoEnabled ? "video.fill" : "video.slash.fill",
+                label: engine.isVideoEnabled ? "Caméra" : "Visio",
+                isActive: engine.isVideoEnabled,
+                activeColor: Color(red: 0.12, green: 0.56, blue: 0.98),
+                activeForeground: .white,
+                size: btnSize
+            ) {
+                Task {
+                    await engine.toggleVideo()
+                }
+            }
+
+            if engine.isVideoEnabled {
+                callControlButton(
+                    icon: "camera.rotate.fill",
+                    label: "Tourner",
+                    isActive: false,
+                    activeColor: .clear,
+                    activeForeground: .white,
+                    size: btnSize
+                ) {
+                    engine.flipCamera()
+                }
+            }
+
+            Button {
+                engine.disconnect(sendHangupSignal: true)
+                Task {
+                    await vm.closeActiveVisioRoom()
+                }
+            } label: {
+                VStack(spacing: 4) {
+                    ZStack {
+                        Circle()
+                            .fill(Color(red: 0.92, green: 0.20, blue: 0.23))
+                            .frame(width: btnSize, height: btnSize)
+                            .shadow(color: Color.red.opacity(0.38), radius: 8, x: 0, y: 4)
+                        Image(systemName: "phone.down.fill")
+                            .font(.system(size: isCompactScreen ? 18 : 20, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+                    Text("Quitter")
+                        .font(.system(size: isCompactScreen ? 9.5 : 10.5, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .lineLimit(1)
+                }
+            }
+        }
+        .padding(.horizontal, isCompactScreen ? 14 : 20)
+        .padding(.vertical, isCompactScreen ? 10 : 13)
+        .background(
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(Color.black.opacity(0.56))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                )
+        )
+    }
+
+    private func callControlButton(
+        icon: String,
+        label: String,
+        isActive: Bool,
+        activeColor: Color,
+        activeForeground: Color,
+        size: CGFloat,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                ZStack {
+                    Circle()
+                        .fill(isActive ? activeColor : Color.white.opacity(0.14))
+                        .frame(width: size, height: size)
+                    Image(systemName: icon)
+                        .font(.system(size: isCompactScreen ? 17 : 19, weight: .semibold))
+                        .foregroundStyle(isActive ? activeForeground : .white)
+                }
+                Text(label)
+                    .font(.system(size: isCompactScreen ? 9.5 : 10.5, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
         }
     }
 }
@@ -171,13 +630,26 @@ public struct VipleVisioGlobalCallOverlay: View {
 
     public init() {}
 
+    private var isCompactScreen: Bool {
+        #if canImport(UIKit)
+        return UIScreen.main.bounds.width <= 385 || UIScreen.main.bounds.height <= 700
+        #else
+        return false
+        #endif
+    }
+
     public var body: some View {
         ZStack {
             if let roomSession = vm.activeVisioRoomSession {
-                VipleVisioWebRTCStudioView(session: roomSession)
-                    .environmentObject(vm)
-                    .transition(.opacity)
-                    .zIndex(210)
+                NativeVipleVisioCallStudioView(
+                    session: roomSession,
+                    localEmail: vm.primaryHostedEmail.isEmpty ? vm.currentEmail : vm.primaryHostedEmail,
+                    localDisplayName: vm.currentUser?.displayName ?? vm.primaryHostedEmail
+                )
+                .id(roomSession.id)
+                .environmentObject(vm)
+                .transition(.opacity)
+                .zIndex(210)
             } else if let incoming = vm.incomingVisioCall {
                 incomingCallCard(incoming)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -206,33 +678,37 @@ public struct VipleVisioGlobalCallOverlay: View {
             )
             .ignoresSafeArea()
 
-            VStack(spacing: 24) {
+            VStack(spacing: isCompactScreen ? 16 : 24) {
                 Spacer()
 
-                HStack(spacing: 7) {
+                HStack(spacing: 6) {
                     Image(systemName: call.isAudioOnly ? "phone.fill" : "video.fill")
-                    Text(call.isAudioOnly ? "VIPLE VISIO • APPEL CLASSIQUE ENTRANT" : "VIPLE VISIO • APPEL VIDÉO ENTRANT")
+                    Text(call.isAudioOnly ? "VIPLE VISIO • APPEL AUDIO ENTRANT" : "VIPLE VISIO • APPEL VIDÉO ENTRANT")
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
                 }
-                .font(.system(size: 11.5, weight: .black, design: .rounded))
-                .tracking(0.8)
+                .font(.system(size: isCompactScreen ? 10.5 : 11.5, weight: .black, design: .rounded))
+                .tracking(0.6)
                 .foregroundStyle(Color(red: 0.35, green: 0.85, blue: 1.0))
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 12)
                 .padding(.vertical, 7)
                 .background(Capsule().fill(Color.white.opacity(0.10)))
 
                 ZStack {
                     Circle()
                         .stroke(Color.cyan.opacity(pulseRing ? 0.05 : 0.38), lineWidth: 2.5)
-                        .frame(width: pulseRing ? 190 : 124, height: pulseRing ? 190 : 124)
+                        .frame(width: pulseRing ? (isCompactScreen ? 156 : 190) : 114,
+                               height: pulseRing ? (isCompactScreen ? 156 : 190) : 114)
                     Circle()
                         .stroke(Color.blue.opacity(pulseRing ? 0.12 : 0.45), lineWidth: 2)
-                        .frame(width: pulseRing ? 156 : 116, height: pulseRing ? 156 : 116)
+                        .frame(width: pulseRing ? (isCompactScreen ? 132 : 156) : 106,
+                               height: pulseRing ? (isCompactScreen ? 132 : 156) : 106)
 
                     VipleMailAvatarView(
                         name: call.callerName,
                         email: call.callerEmail,
                         avatarUrl: call.callerAvatarUrl,
-                        size: 106,
+                        size: isCompactScreen ? 92 : 106,
                         isVip: true
                     )
                 }
@@ -243,13 +719,17 @@ public struct VipleVisioGlobalCallOverlay: View {
                     }
                 }
 
-                VStack(spacing: 6) {
+                VStack(spacing: 5) {
                     Text(call.callerName)
-                        .font(.system(size: 28, weight: .black, design: .rounded))
+                        .font(.system(size: isCompactScreen ? 23 : 28, weight: .black, design: .rounded))
                         .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
                     Text(call.callerEmail)
-                        .font(.system(size: 14.5, weight: .semibold))
+                        .font(.system(size: isCompactScreen ? 13 : 14.5, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.75))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                     Text("Ami Viple Live ID vérifié")
                         .font(.system(size: 12, weight: .bold, design: .rounded))
                         .foregroundStyle(Color(red: 0.25, green: 0.90, blue: 0.65))
@@ -258,23 +738,23 @@ public struct VipleVisioGlobalCallOverlay: View {
 
                 Spacer()
 
-                HStack(spacing: 52) {
+                HStack(spacing: isCompactScreen ? 40 : 52) {
                     Button {
                         Task {
                             await vm.declineOrEndVisioCall(call, action: "decline")
                         }
                     } label: {
-                        VStack(spacing: 10) {
+                        VStack(spacing: 8) {
                             ZStack {
                                 Circle()
                                     .fill(Color(red: 0.92, green: 0.22, blue: 0.24))
-                                    .frame(width: 72, height: 72)
+                                    .frame(width: isCompactScreen ? 64 : 72, height: isCompactScreen ? 64 : 72)
                                 Image(systemName: "phone.down.fill")
-                                    .font(.system(size: 26, weight: .bold))
+                                    .font(.system(size: isCompactScreen ? 22 : 26, weight: .bold))
                                     .foregroundStyle(.white)
                             }
                             Text("Refuser")
-                                .font(.system(size: 14, weight: .bold, design: .rounded))
+                                .font(.system(size: 13.5, weight: .bold, design: .rounded))
                                 .foregroundStyle(.white)
                         }
                     }
@@ -284,24 +764,24 @@ public struct VipleVisioGlobalCallOverlay: View {
                             await vm.answerIncomingVisioCall(call)
                         }
                     } label: {
-                        VStack(spacing: 10) {
+                        VStack(spacing: 8) {
                             ZStack {
                                 Circle()
                                     .fill(Color(red: 0.12, green: 0.78, blue: 0.46))
-                                    .frame(width: 72, height: 72)
+                                    .frame(width: isCompactScreen ? 64 : 72, height: isCompactScreen ? 64 : 72)
                                 Image(systemName: call.isAudioOnly ? "phone.fill" : "video.fill")
-                                    .font(.system(size: 26, weight: .bold))
+                                    .font(.system(size: isCompactScreen ? 22 : 26, weight: .bold))
                                     .foregroundStyle(.white)
                             }
                             Text("Accepter")
-                                .font(.system(size: 14, weight: .bold, design: .rounded))
+                                .font(.system(size: 13.5, weight: .bold, design: .rounded))
                                 .foregroundStyle(.white)
                         }
                     }
                 }
-                .padding(.bottom, 54)
+                .padding(.bottom, isCompactScreen ? 32 : 54)
             }
-            .padding(.horizontal, 24)
+            .padding(.horizontal, isCompactScreen ? 18 : 24)
         }
     }
 
@@ -318,28 +798,32 @@ public struct VipleVisioGlobalCallOverlay: View {
             )
             .ignoresSafeArea()
 
-            VStack(spacing: 22) {
+            VStack(spacing: isCompactScreen ? 16 : 22) {
                 Spacer()
 
                 Text(call.isAudioOnly ? "APPEL CLASSIQUE AUDIO EN COURS…" : "APPEL VIPLE VISIO EN COURS…")
-                    .font(.system(size: 12, weight: .black, design: .rounded))
-                    .tracking(0.8)
+                    .font(.system(size: isCompactScreen ? 11 : 12, weight: .black, design: .rounded))
+                    .tracking(0.6)
                     .foregroundStyle(Color.cyan)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
 
                 VipleMailAvatarView(
                     name: call.calleeName,
                     email: call.calleeEmail,
                     avatarUrl: call.calleeAvatarUrl,
-                    size: 104,
+                    size: isCompactScreen ? 92 : 104,
                     isVip: true
                 )
 
                 VStack(spacing: 6) {
                     Text(call.calleeName)
-                        .font(.system(size: 26, weight: .black, design: .rounded))
+                        .font(.system(size: isCompactScreen ? 22 : 26, weight: .black, design: .rounded))
                         .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
                     Text("Sonnerie sur son Viple Mail…")
-                        .font(.system(size: 14.5, weight: .medium))
+                        .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(.white.opacity(0.75))
                 }
 
@@ -350,23 +834,23 @@ public struct VipleVisioGlobalCallOverlay: View {
                         await vm.declineOrEndVisioCall(call, action: "hangup")
                     }
                 } label: {
-                    VStack(spacing: 10) {
+                    VStack(spacing: 8) {
                         ZStack {
                             Circle()
                                 .fill(Color(red: 0.92, green: 0.22, blue: 0.24))
-                                .frame(width: 72, height: 72)
+                                .frame(width: isCompactScreen ? 64 : 72, height: isCompactScreen ? 64 : 72)
                             Image(systemName: "phone.down.fill")
-                                .font(.system(size: 26, weight: .bold))
+                                .font(.system(size: isCompactScreen ? 22 : 26, weight: .bold))
                                 .foregroundStyle(.white)
                         }
                         Text("Annuler l'appel")
-                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                            .font(.system(size: 13.5, weight: .bold, design: .rounded))
                             .foregroundStyle(.white)
                     }
                 }
-                .padding(.bottom, 54)
+                .padding(.bottom, isCompactScreen ? 32 : 54)
             }
-            .padding(.horizontal, 24)
+            .padding(.horizontal, isCompactScreen ? 18 : 24)
         }
     }
 }
@@ -690,10 +1174,12 @@ public struct MailAgendaView: View {
                     Button {
                         vm.openAgendaVisioRoom(ev, audioOnly: false)
                     } label: {
-                        Label("Rejoindre le salon Visio", systemImage: "video.fill")
-                            .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                        Label("Rejoindre Visio", systemImage: "video.fill")
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                             .foregroundStyle(.white)
-                            .padding(.horizontal, 13)
+                            .padding(.horizontal, 12)
                             .padding(.vertical, 8)
                             .background(Capsule().fill(VipleMailPalette.indigo))
                     }
@@ -701,10 +1187,12 @@ public struct MailAgendaView: View {
                     Button {
                         eventForGuestLinkSheet = ev
                     } label: {
-                        Label("Envoyer un lien par mail", systemImage: "paperplane.fill")
+                        Label("Lien par mail", systemImage: "paperplane.fill")
                             .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                             .foregroundStyle(VipleMailPalette.primary)
-                            .padding(.horizontal, 12)
+                            .padding(.horizontal, 11)
                             .padding(.vertical, 8)
                             .background(Capsule().fill(VipleMailPalette.primary.opacity(0.12)))
                     }
@@ -1222,29 +1710,25 @@ public struct VipleCalendarMailInviteCardView: View {
 
                 if let visioUrl = invite.visioJoinUrl, !visioUrl.isEmpty {
                     Button {
-                        var join = visioUrl
-                        if !join.contains("embed=") {
-                            join += (join.contains("?") ? "&" : "?") + "nosso=1&embed=1&autojoin=1"
-                        }
-                        if let myName = vm.currentUser?.displayName, !join.contains("name=") {
-                            let enc = myName.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? myName
-                            join += "&name=\(enc)"
-                        }
                         vm.activeVisioRoomSession = VipleVisioRoomPresentation(
                             id: invite.id,
                             title: invite.title,
                             peerName: "Salon Viple Visio",
-                            joinUrl: join,
+                            peerEmail: invite.organizerEmail,
+                            peerAvatarUrl: vm.resolveAvatarUrl(for: invite.organizerEmail),
+                            joinUrl: visioUrl,
                             isAudioOnly: false
                         )
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "video.fill")
                             Text("Rejoindre Visio")
-                                .font(.system(size: 13.5, weight: .bold, design: .rounded))
+                                .font(.system(size: 13, weight: .bold, design: .rounded))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
                         }
                         .foregroundStyle(.white)
-                        .padding(.horizontal, 14)
+                        .padding(.horizontal, 13)
                         .padding(.vertical, 10)
                         .background(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)

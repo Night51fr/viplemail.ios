@@ -4,6 +4,40 @@ import CryptoKit
 import UIKit
 #endif
 
+// MARK: - Métriques d'Écran Adaptatives (Optimisation iPhone SE 375×667pt & Formats Compacts)
+
+public enum VipleMailLayout {
+    @MainActor
+    public static var screenWidth: CGFloat {
+        #if canImport(UIKit)
+        return UIScreen.main.bounds.width
+        #else
+        return 393
+        #endif
+    }
+
+    @MainActor
+    public static var screenHeight: CGFloat {
+        #if canImport(UIKit)
+        return UIScreen.main.bounds.height
+        #else
+        return 852
+        #endif
+    }
+
+    /// Vrai sur iPhone SE (1re, 2e, 3e génération — 375pt), iPhone mini et mode Zoom d'affichage (320pt)
+    @MainActor
+    public static var isCompactPhone: Bool {
+        screenWidth <= 385
+    }
+
+    /// Vrai sur les écrans de hauteur compacte type iPhone SE (667pt)
+    @MainActor
+    public static var isShortPhone: Bool {
+        screenHeight <= 700
+    }
+}
+
 // MARK: - Mode d'Apparence Utilisateur « Viple Mail » (Automatique iOS, Clair ou Sombre OLED)
 
 public enum VipleMailAppearanceMode: String, CaseIterable, Identifiable, Codable, Sendable {
@@ -675,18 +709,29 @@ public struct VipleMailHorizontalLogoView: View {
     @Environment(\.colorScheme) private var colorScheme
     public var height: CGFloat = 36
     public var lightModeOnDarkBackground: Bool = false
+    public var showSubtitle: Bool = true
 
-    public init(height: CGFloat = 36, lightModeOnDarkBackground: Bool = false) {
+    public init(
+        height: CGFloat = 36,
+        lightModeOnDarkBackground: Bool = false,
+        showSubtitle: Bool = true
+    ) {
         self.height = height
         self.lightModeOnDarkBackground = lightModeOnDarkBackground
+        self.showSubtitle = showSubtitle
+    }
+
+    private var effectiveHeight: CGFloat {
+        VipleMailLayout.isCompactPhone ? min(height, 30) : height
     }
 
     public var body: some View {
-        HStack(spacing: 10) {
+        let h = effectiveHeight
+        HStack(spacing: VipleMailLayout.isCompactPhone ? 7 : 10) {
             ZStack {
-                RoundedRectangle(cornerRadius: height * 0.26, style: .continuous)
+                RoundedRectangle(cornerRadius: h * 0.26, style: .continuous)
                     .fill(VipleMailPalette.heroGradient)
-                    .frame(width: height, height: height)
+                    .frame(width: h, height: h)
                     .shadow(
                         color: VipleMailPalette.primarySolid.opacity(colorScheme == .dark ? 0.45 : 0.32),
                         radius: 6,
@@ -695,30 +740,41 @@ public struct VipleMailHorizontalLogoView: View {
                     )
 
                 Image(systemName: "envelope.open.fill")
-                    .font(.system(size: height * 0.46, weight: .bold))
+                    .font(.system(size: h * 0.46, weight: .bold))
                     .foregroundStyle(.white)
 
                 Text("V")
-                    .font(.system(size: height * 0.24, weight: .black, design: .rounded))
+                    .font(.system(size: h * 0.24, weight: .black, design: .rounded))
                     .foregroundStyle(VipleMailPalette.cobaltDeep)
-                    .offset(y: -height * 0.04)
+                    .offset(y: -h * 0.04)
             }
 
             VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 4) {
+                HStack(spacing: 3.5) {
                     Text("Viple")
-                        .font(.system(size: height * 0.56, weight: .black, design: .rounded))
+                        .font(.system(size: h * 0.56, weight: .black, design: .rounded))
                         .foregroundStyle(lightModeOnDarkBackground ? Color.white : VipleMailPalette.ink)
                     Text("Mail")
-                        .font(.system(size: height * 0.56, weight: .semibold, design: .rounded))
+                        .font(.system(size: h * 0.56, weight: .semibold, design: .rounded))
                         .foregroundStyle((lightModeOnDarkBackground || colorScheme == .dark) ? VipleMailPalette.azureGlow : VipleMailPalette.primary)
                 }
-                Text("Un service Viple Live")
-                    .font(.system(size: max(9.5, height * 0.24), weight: .bold, design: .rounded))
-                    .tracking(0.3)
-                    .foregroundStyle(lightModeOnDarkBackground ? Color.white.opacity(0.82) : VipleMailPalette.inkMuted)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .fixedSize(horizontal: true, vertical: false)
+
+                if showSubtitle {
+                    Text("Un service Viple Live")
+                        .font(.system(size: max(8.5, h * 0.24), weight: .bold, design: .rounded))
+                        .tracking(VipleMailLayout.isCompactPhone ? 0.1 : 0.3)
+                        .foregroundStyle(lightModeOnDarkBackground ? Color.white.opacity(0.82) : VipleMailPalette.inkMuted)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.80)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
             }
         }
+        .fixedSize(horizontal: true, vertical: false)
+        .layoutPriority(2)
     }
 }
 

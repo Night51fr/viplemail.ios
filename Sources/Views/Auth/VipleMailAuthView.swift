@@ -67,8 +67,8 @@ public struct VipleMailAuthView: View {
                         authLegalLinksFooter
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 24)
+                .padding(.horizontal, VipleMailLayout.isCompactPhone ? 14 : 20)
+                .padding(.vertical, VipleMailLayout.isCompactPhone ? 16 : 24)
             }
         }
         .fullScreenCover(isPresented: $isShowingLiveIDCreationStudio) {
@@ -100,34 +100,41 @@ public struct VipleMailAuthView: View {
     // MARK: - En-tête Viple Mail × Viple Live ID
 
     private var brandHeader: some View {
-        VStack(spacing: 14) {
-            HStack {
-                VipleMailHorizontalLogoView(height: 38, lightModeOnDarkBackground: true)
-                Spacer()
-                HStack(spacing: 5) {
+        let compact = VipleMailLayout.isCompactPhone
+        return VStack(spacing: compact ? 10 : 14) {
+            HStack(spacing: 8) {
+                VipleMailHorizontalLogoView(
+                    height: compact ? 30 : 38,
+                    lightModeOnDarkBackground: true,
+                    showSubtitle: !compact
+                )
+                Spacer(minLength: 4)
+                HStack(spacing: 4) {
                     Image(systemName: "lock.shield.fill")
+                        .font(.system(size: compact ? 10.5 : 12))
                         .foregroundStyle(VipleMailPalette.azureGlow)
-                    Text("SSO Viple Live ID")
-                        .font(.system(size: 11.5, weight: .bold, design: .rounded))
+                    Text(compact ? "SSO Viple Live" : "SSO Viple Live ID")
+                        .font(.system(size: compact ? 10.5 : 11.5, weight: .bold, design: .rounded))
                         .foregroundStyle(.white)
+                        .lineLimit(1)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                .padding(.horizontal, compact ? 9 : 12)
+                .padding(.vertical, compact ? 5 : 6)
                 .background(Capsule().fill(Color.white.opacity(0.16)))
             }
 
-            VStack(spacing: 8) {
+            VStack(spacing: 6) {
                 Text("Votre messagerie officielle @viplemail.fr & @cenelis.com")
-                    .font(.system(size: 25, weight: .black, design: .rounded))
+                    .font(.system(size: compact ? 20 : 25, weight: .black, design: .rounded))
                     .foregroundStyle(.white)
                     .multilineTextAlignment(.center)
 
                 Text("Connectée en direct à mail.viplemail.fr (Stalwart Mail Server), au SSO Viple Live ID et à Cenelis Connect, avec 5 Go de stockage, boîte Prioritaire et carnet VIP.")
-                    .font(.system(size: 13.5, weight: .medium))
+                    .font(.system(size: compact ? 12.2 : 13.5, weight: .medium))
                     .foregroundStyle(.white.opacity(0.88))
                     .multilineTextAlignment(.center)
             }
-            .padding(.top, 4)
+            .padding(.top, 2)
         }
     }
 
@@ -202,9 +209,12 @@ public struct VipleMailAuthView: View {
                     }
                 } label: {
                     Text(tab.rawValue)
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .font(.system(size: VipleMailLayout.isCompactPhone ? 12.5 : 14, weight: .bold, design: .rounded))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 11)
                         .background(
                             RoundedRectangle(cornerRadius: 13, style: .continuous)
                                 .fill(selectedTab == tab ? VipleMailPalette.primary : Color.clear)

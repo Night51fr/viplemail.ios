@@ -170,6 +170,42 @@ public final class VipleMailViewModel: ObservableObject {
         }
     }
 
+    /// Liste ordonnée utilisée pour naviguer directement d'un courrier à l'autre sans repasser par la liste
+    public func readerNavigationPool(around current: VipleMailMessage) -> [VipleMailMessage] {
+        var pool = displayedMessages
+        if !pool.contains(where: { $0.id == current.id }) {
+            pool.append(current)
+            pool.sort { lhs, rhs in
+                if lhs.isPinned != rhs.isPinned {
+                    return lhs.isPinned && !rhs.isPinned
+                }
+                return lhs.receivedAt > rhs.receivedAt
+            }
+        }
+        return pool
+    }
+
+    public func readerPosition(for current: VipleMailMessage) -> (index: Int, total: Int)? {
+        let pool = readerNavigationPool(around: current)
+        guard pool.count > 1, let idx = pool.firstIndex(where: { $0.id == current.id }) else {
+            return pool.isEmpty ? nil : (0, pool.count)
+        }
+        return (idx, pool.count)
+    }
+
+    public func adjacentReaderMessage(from current: VipleMailMessage, delta: Int) -> VipleMailMessage? {
+        let pool = readerNavigationPool(around: current)
+        guard let idx = pool.firstIndex(where: { $0.id == current.id }) else { return nil }
+        let targetIdx = idx + delta
+        guard targetIdx >= 0 && targetIdx < pool.count else { return nil }
+        return pool[targetIdx]
+    }
+
+    public func switchReaderDirectly(to target: VipleMailMessage) {
+        self.openedMessage = target
+        self.isReadingMessage = true
+    }
+
     public func openChatSession(_ session: VipleChatSession) {
         withAnimation(.spring(response: 0.36, dampingFraction: 0.88)) {
             self.openedChatSession = session
@@ -2706,8 +2742,11 @@ public final class VipleMailViewModel: ObservableObject {
             let effective = res.call ?? call
             self.activeVisioRoomSession = VipleVisioRoomPresentation(
                 id: effective.callId,
+                roomCode: effective.roomCode,
                 title: effective.modeLabel,
                 peerName: effective.callerName,
+                peerEmail: effective.callerEmail,
+                peerAvatarUrl: resolveAvatarUrl(for: effective.callerEmail, explicitUrl: effective.callerAvatarUrl),
                 joinUrl: effective.joinUrl,
                 isAudioOnly: effective.isAudioOnly,
                 activeCallId: effective.callId
@@ -2715,8 +2754,11 @@ public final class VipleMailViewModel: ObservableObject {
         } catch {
             self.activeVisioRoomSession = VipleVisioRoomPresentation(
                 id: call.callId,
+                roomCode: call.roomCode,
                 title: call.modeLabel,
                 peerName: call.callerName,
+                peerEmail: call.callerEmail,
+                peerAvatarUrl: resolveAvatarUrl(for: call.callerEmail, explicitUrl: call.callerAvatarUrl),
                 joinUrl: call.joinUrl,
                 isAudioOnly: call.isAudioOnly,
                 activeCallId: call.callId
@@ -2760,23 +2802,14 @@ public final class VipleMailViewModel: ObservableObject {
 
     public func openAgendaVisioRoom(_ event: VipleAgendaEvent, audioOnly: Bool = false) {
         let baseJoin = event.visioJoinUrl ?? event.visioGuestJoinUrl ?? ""
-        guard !baseJoin.isEmpty else { return }
-        var finalUrl = baseJoin
-        if !finalUrl.contains("embed=") {
-            finalUrl += (finalUrl.contains("?") ? "&" : "?") + "nosso=1&embed=1&autojoin=1"
-        }
-        if audioOnly && !finalUrl.contains("audioOnly=") {
-            finalUrl += "&audioOnly=1"
-        }
-        if let myName = currentUser?.displayName, !finalUrl.contains("name=") {
-            let enc = myName.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? myName
-            finalUrl += "&name=\(enc)"
-        }
         self.activeVisioRoomSession = VipleVisioRoomPresentation(
             id: event.eventId,
+            roomCode: event.visioRoomCode,
             title: event.title,
             peerName: "Salon Viple Visio",
-            joinUrl: finalUrl,
+            peerEmail: event.organizerEmail,
+            peerAvatarUrl: resolveAvatarUrl(for: event.organizerEmail),
+            joinUrl: baseJoin,
             isAudioOnly: audioOnly,
             activeCallId: nil
         )
@@ -2787,7 +2820,7 @@ public final class VipleMailViewModel: ObservableObject {
         visioSignalingLoopTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self, self.isAuthenticated else { break }
-                let fastPoll = (self.outgoingVisioCall != nil || self.incomingVisioCall != nil)
+                let fastPoll = (self.outgoingVisioCall != nil || self.incomingVisioCall != nil || self.activeVisioRoomSession?.activeCallId != nil)
                 try? await Task.sleep(nanoseconds: fastPoll ? 1_500_000_000 : 3_800_000_000)
                 if Task.isCancelled { break }
                 await self.pollVisioSignalingOnce()
@@ -2803,7 +2836,9 @@ public final class VipleMailViewModel: ObservableObject {
     private func pollVisioSignalingOnce() async {
         let owner = primaryHostedEmail.isEmpty ? currentEmail : primaryHostedEmail
         guard !owner.isEmpty, owner != "__all__" else { return }
-        let trackedId = outgoingVisioCall?.callId ?? incomingVisioCall?.callId
+        let trackedId = outgoingVisioCall?.callId
+            ?? incomingVisioCall?.callId
+            ?? activeVisioRoomSession?.activeCallId
 
         guard let res = try? await VipleMailAPIClient.shared.fetchActiveVisioCalls(
             email: owner,
@@ -2825,8 +2860,11 @@ public final class VipleMailViewModel: ObservableObject {
                 outgoingVisioCall = nil
                 activeVisioRoomSession = VipleVisioRoomPresentation(
                     id: tracked.callId,
+                    roomCode: tracked.roomCode,
                     title: tracked.modeLabel,
                     peerName: tracked.calleeName,
+                    peerEmail: tracked.calleeEmail,
+                    peerAvatarUrl: resolveAvatarUrl(for: tracked.calleeEmail, explicitUrl: tracked.calleeAvatarUrl),
                     joinUrl: tracked.joinUrl,
                     isAudioOnly: tracked.isAudioOnly,
                     activeCallId: tracked.callId
@@ -2839,6 +2877,13 @@ public final class VipleMailViewModel: ObservableObject {
                 if st == "missed" {
                     showToast("\(tracked.calleeName) n'a pas répondu.")
                 }
+            }
+        } else if let activeCallId = activeVisioRoomSession?.activeCallId,
+                  let tracked = res.trackedCall,
+                  tracked.callId == activeCallId {
+            let st = tracked.status.lowercased()
+            if st == "ended" || st == "declined" || st == "missed" {
+                activeVisioRoomSession = nil
             }
         }
     }

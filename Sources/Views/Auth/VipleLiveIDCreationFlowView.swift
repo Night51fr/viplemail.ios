@@ -171,16 +171,16 @@ public struct VipleLiveIDCreationFlowView: View {
             } else {
                 VStack(spacing: 0) {
                     topNavigationHeader
-                        .padding(.horizontal, 18)
-                        .padding(.top, 10)
-                        .padding(.bottom, 8)
+                        .padding(.horizontal, VipleMailLayout.isCompactPhone ? 13 : 18)
+                        .padding(.top, 8)
+                        .padding(.bottom, 6)
 
                     stepProgressRail
-                        .padding(.horizontal, 18)
-                        .padding(.bottom, 12)
+                        .padding(.horizontal, VipleMailLayout.isCompactPhone ? 13 : 18)
+                        .padding(.bottom, 10)
 
                     ScrollView(showsIndicators: false) {
-                        VStack(spacing: 18) {
+                        VStack(spacing: VipleMailLayout.isCompactPhone ? 14 : 18) {
                             // 2. Carte Passeport Holographique Interactive en Direct
                             TimelineView(.animation(minimumInterval: reduceMotion ? 0.3 : (1.0 / 60.0))) { timeline in
                                 let elapsed = timeline.date.timeIntervalSince(flowStartDate)
@@ -201,9 +201,9 @@ public struct VipleLiveIDCreationFlowView: View {
 
                             legalQuickFooter
                                 .padding(.top, 4)
-                                .padding(.bottom, 24)
+                                .padding(.bottom, 20)
                         }
-                        .padding(.horizontal, 18)
+                        .padding(.horizontal, VipleMailLayout.isCompactPhone ? 13 : 18)
                         .padding(.top, 4)
                     }
 
@@ -423,18 +423,20 @@ public struct VipleLiveIDCreationFlowView: View {
         }()
 
         return VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .center) {
-                HStack(spacing: 7) {
+            HStack(alignment: .center, spacing: 6) {
+                HStack(spacing: 5) {
                     Image(systemName: "globe.europe.africa.fill")
-                        .font(.system(size: 12.5, weight: .bold))
+                        .font(.system(size: 11.5, weight: .bold))
                         .foregroundStyle(VipleMailPalette.azureGlow)
-                    Text("PASSEPORT NUMÉRIQUE VIPLE LIVE ID")
-                        .font(.system(size: 10, weight: .black, design: .rounded))
-                        .tracking(0.9)
+                    Text(VipleMailLayout.isCompactPhone ? "PASSEPORT VIPLE LIVE ID" : "PASSEPORT NUMÉRIQUE VIPLE LIVE ID")
+                        .font(.system(size: 9.5, weight: .black, design: .rounded))
+                        .tracking(0.5)
                         .foregroundStyle(.white.opacity(0.90))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
                 }
 
-                Spacer()
+                Spacer(minLength: 4)
 
                 HStack(spacing: 4) {
                     Circle()
@@ -443,8 +445,9 @@ public struct VipleLiveIDCreationFlowView: View {
                     Text(passwordStrengthScore >= 1 ? "MailRTE Prêt" : "Étape \(currentStep.stepNumber)/4")
                         .font(.system(size: 10, weight: .bold, design: .rounded))
                         .foregroundStyle(.white)
+                        .lineLimit(1)
                 }
-                .padding(.horizontal, 9)
+                .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(Capsule().fill(Color.white.opacity(0.15)))
             }

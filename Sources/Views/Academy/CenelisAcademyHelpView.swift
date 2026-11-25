@@ -521,62 +521,72 @@ public struct CenelisAcademyHelpView: View {
     // MARK: - En-tête identitaire Cenelis Academy avec bouton Retour vers Viple Mail
 
     private var academyNavigationBar: some View {
-        HStack(spacing: 10) {
+        let compact = VipleMailLayout.isCompactPhone
+        return HStack(spacing: compact ? 6 : 10) {
             Button {
                 dismiss()
             } label: {
-                HStack(spacing: 5) {
+                HStack(spacing: 4) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 15, weight: .black))
+                        .font(.system(size: compact ? 13.5 : 15, weight: .black))
                     Text("Retour")
-                        .font(.system(size: 14.5, weight: .bold, design: .rounded))
+                        .font(.system(size: compact ? 13 : 14.5, weight: .bold, design: .rounded))
+                        .lineLimit(1)
                 }
+                .fixedSize(horizontal: true, vertical: false)
                 .foregroundStyle(EmbeddedAcademyPalette.pine)
-                .padding(.horizontal, 11)
-                .padding(.vertical, 7)
+                .padding(.horizontal, compact ? 9 : 11)
+                .padding(.vertical, compact ? 6 : 7)
                 .background(Capsule().fill(EmbeddedAcademyPalette.pineSoft))
                 .overlay(Capsule().stroke(EmbeddedAcademyPalette.pineBorder, lineWidth: 1))
             }
 
-            HStack(spacing: 6) {
+            HStack(spacing: 5) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .fill(EmbeddedAcademyPalette.pineSolid)
-                        .frame(width: 28, height: 28)
+                        .frame(width: compact ? 24 : 28, height: compact ? 24 : 28)
                     Image(systemName: "checkmark.shield.fill")
-                        .font(.system(size: 14, weight: .bold))
+                        .font(.system(size: compact ? 12 : 14, weight: .bold))
                         .foregroundStyle(EmbeddedAcademyPalette.gold)
                 }
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("CENELIS")
-                        .font(.system(size: 9, weight: .black, design: .rounded))
-                        .tracking(1.4)
-                        .foregroundStyle(EmbeddedAcademyPalette.copper)
+                    if !compact {
+                        Text("CENELIS")
+                            .font(.system(size: 9, weight: .black, design: .rounded))
+                            .tracking(1.4)
+                            .foregroundStyle(EmbeddedAcademyPalette.copper)
+                            .lineLimit(1)
+                    }
                     Text("Academy")
-                        .font(.system(size: 15, weight: .black, design: .rounded))
+                        .font(.system(size: compact ? 14 : 15, weight: .black, design: .rounded))
                         .foregroundStyle(EmbeddedAcademyPalette.ink)
+                        .lineLimit(1)
                 }
+                .fixedSize(horizontal: true, vertical: false)
             }
 
-            Spacer()
+            Spacer(minLength: 4)
 
             if let course {
                 Button {
                     isShowingTocSheet = true
                 } label: {
-                    HStack(spacing: 5) {
+                    HStack(spacing: 4) {
                         Image(systemName: "list.bullet.indent")
-                            .font(.system(size: 12, weight: .bold))
+                            .font(.system(size: 11.5, weight: .bold))
                         Text(activeStepIndex < course.parts.count
-                             ? "Page \(activeStepIndex + 1)/\(course.parts.count)"
-                             : "Quiz Final")
-                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                             ? (compact ? "\(activeStepIndex + 1)/\(course.parts.count)" : "Page \(activeStepIndex + 1)/\(course.parts.count)")
+                             : "Quiz")
+                            .font(.system(size: compact ? 11.5 : 12, weight: .bold, design: .rounded))
+                            .lineLimit(1)
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 9.5, weight: .bold))
+                            .font(.system(size: 9, weight: .bold))
                     }
+                    .fixedSize(horizontal: true, vertical: false)
                     .foregroundStyle(EmbeddedAcademyPalette.pine)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6.5)
+                    .padding(.horizontal, compact ? 8 : 10)
+                    .padding(.vertical, 6)
                     .background(Capsule().fill(EmbeddedAcademyPalette.pineSoft))
                 }
 
@@ -587,17 +597,17 @@ public struct CenelisAcademyHelpView: View {
                         }
                     } label: {
                         Image(systemName: isFocusDeckMode ? "rectangle.stack.fill" : "text.page.fill")
-                            .font(.system(size: 14, weight: .bold))
+                            .font(.system(size: 13.5, weight: .bold))
                             .foregroundStyle(EmbeddedAcademyPalette.copper)
-                            .frame(width: 32, height: 32)
+                            .frame(width: compact ? 29 : 32, height: compact ? 29 : 32)
                             .background(Circle().fill(EmbeddedAcademyPalette.copperSoft))
                     }
                     .accessibilityLabel(isFocusDeckMode ? "Mode Fluide" : "Mode Focus")
                 }
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, compact ? 10 : 14)
+        .padding(.vertical, compact ? 8 : 10)
         .background(EmbeddedAcademyPalette.surface)
         .overlay(alignment: .bottom) {
             Rectangle().fill(EmbeddedAcademyPalette.border).frame(height: 1)

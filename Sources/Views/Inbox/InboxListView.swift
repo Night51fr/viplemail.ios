@@ -93,8 +93,9 @@ public struct InboxListView: View {
     // MARK: - En-tête Dossier Actif, Recherche, Prioritaire/Autres & Puces de Filtre
 
     private var folderAndSearchHeader: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 10) {
+        let compact = VipleMailLayout.isCompactPhone
+        return VStack(spacing: compact ? 8 : 10) {
+            HStack(spacing: compact ? 6 : 10) {
                 Menu {
                     ForEach(vm.folders) { folder in
                         Button {
@@ -109,17 +110,19 @@ public struct InboxListView: View {
                         }
                     }
                 } label: {
-                    HStack(spacing: 7) {
+                    HStack(spacing: 5) {
                         Text(vm.activeFolderTitle)
-                            .font(.system(size: 22, weight: .black, design: .rounded))
+                            .font(.system(size: compact ? 18.5 : 22, weight: .black, design: .rounded))
                             .foregroundStyle(VipleMailPalette.ink)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
                         Image(systemName: "chevron.down.circle.fill")
-                            .font(.system(size: 15, weight: .bold))
+                            .font(.system(size: compact ? 13.5 : 15, weight: .bold))
                             .foregroundStyle(VipleMailPalette.primary)
                     }
                 }
 
-                Spacer()
+                Spacer(minLength: 4)
 
                 if vm.activeFolderId == "Trash" || vm.activeFolderId == "Spam" {
                     Button(role: .destructive) {
@@ -128,9 +131,10 @@ public struct InboxListView: View {
                         }
                     } label: {
                         Label("Vider", systemImage: "trash.slash.fill")
-                            .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                            .font(.system(size: compact ? 11.5 : 12.5, weight: .bold, design: .rounded))
+                            .lineLimit(1)
                             .foregroundStyle(VipleMailPalette.danger)
-                            .padding(.horizontal, 11)
+                            .padding(.horizontal, compact ? 9 : 11)
                             .padding(.vertical, 6)
                             .background(Capsule().fill(VipleMailPalette.danger.opacity(0.12)))
                     }
@@ -142,9 +146,9 @@ public struct InboxListView: View {
                     }
                 } label: {
                     Image(systemName: "envelope.open.fill")
-                        .font(.system(size: 14, weight: .bold))
+                        .font(.system(size: compact ? 13 : 14, weight: .bold))
                         .foregroundStyle(VipleMailPalette.primary)
-                        .frame(width: 34, height: 34)
+                        .frame(width: compact ? 31 : 34, height: compact ? 31 : 34)
                         .background(Circle().fill(VipleMailPalette.surfaceSubtle))
                 }
                 .accessibilityLabel("Tout marquer comme lu")
@@ -157,11 +161,13 @@ public struct InboxListView: View {
                         }
                     }
                 } label: {
-                    Text(vm.isSelectionMode ? "Terminer" : "Sélectionner")
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                    Text(vm.isSelectionMode ? "OK" : "Sélectionner")
+                        .font(.system(size: compact ? 12 : 13, weight: .bold, design: .rounded))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                         .foregroundStyle(vm.isSelectionMode ? .white : VipleMailPalette.primary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
+                        .padding(.horizontal, compact ? 10 : 12)
+                        .padding(.vertical, compact ? 6 : 7)
                         .background(
                             Capsule()
                                 .fill(vm.isSelectionMode ? VipleMailPalette.primary : VipleMailPalette.surfaceSubtle)
@@ -239,8 +245,8 @@ public struct InboxListView: View {
                 }
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, VipleMailLayout.isCompactPhone ? 12 : 16)
+        .padding(.vertical, VipleMailLayout.isCompactPhone ? 9 : 12)
         .background(
             VipleMailPalette.surface
                 .overlay(alignment: .bottom) {
@@ -568,12 +574,13 @@ public struct InboxListView: View {
 
     private func messageRowContent(_ msg: VipleMailMessage) -> some View {
         let isSelected = vm.selectedMessageIds.contains(msg.id)
-        return HStack(alignment: .top, spacing: 12) {
+        let compact = VipleMailLayout.isCompactPhone
+        return HStack(alignment: .top, spacing: compact ? 10 : 12) {
             if vm.isSelectionMode {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 22, weight: .bold))
+                    .font(.system(size: compact ? 20 : 22, weight: .bold))
                     .foregroundStyle(isSelected ? VipleMailPalette.primary : VipleMailPalette.inkMuted)
-                    .padding(.top, 10)
+                    .padding(.top, 8)
             }
 
             VipleMailAvatarView(
@@ -582,13 +589,13 @@ public struct InboxListView: View {
                 avatarUrl: msg.folder == "Sent"
                     ? vm.resolveAvatarUrl(for: msg.recipientEmail, explicitUrl: msg.recipientAvatarUrl)
                     : vm.resolveAvatarUrl(for: msg.senderEmail, explicitUrl: msg.senderAvatarUrl),
-                size: 46,
+                size: compact ? 40 : 46,
                 isVip: msg.isVipSender,
                 isUnread: !msg.isRead
             )
 
             VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .center, spacing: 6) {
+                HStack(alignment: .center, spacing: 5) {
                     if msg.isPinned {
                         Image(systemName: "pin.fill")
                             .font(.system(size: 11, weight: .bold))
@@ -600,9 +607,10 @@ public struct InboxListView: View {
                             .foregroundStyle(VipleMailPalette.danger)
                     }
                     Text(msg.folder == "Sent" ? "À : \(msg.recipientEmail)" : msg.senderName)
-                        .font(.system(size: 15, weight: msg.isRead ? .semibold : .black, design: .rounded))
+                        .font(.system(size: compact ? 14.2 : 15, weight: msg.isRead ? .semibold : .black, design: .rounded))
                         .foregroundStyle(VipleMailPalette.ink)
                         .lineLimit(1)
+                        .layoutPriority(1)
 
                     if msg.folder != "Sent" && msg.shouldShowVerifiedSenderBadge {
                         Image(systemName: "checkmark.seal.fill")
