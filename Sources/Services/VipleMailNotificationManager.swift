@@ -177,7 +177,6 @@ public final class VipleMailNotificationManager: NSObject, ObservableObject, UNU
         scheduleBackgroundTasks()
 
         #if canImport(UIKit)
-        UIApplication.shared.setMinimumBackgroundFetchInterval(UIApplication.backgroundFetchIntervalMinimum)
         let isForegroundLaunch = UIApplication.shared.applicationState != .background
         #else
         let isForegroundLaunch = true

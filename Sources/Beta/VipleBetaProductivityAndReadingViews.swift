@@ -12,7 +12,7 @@ import UIKit
 // MARK: - Moteur TTS Podcast Natif (#011)
 
 @MainActor
-public final class BetaMailPodcastEngine: NSObject, ObservableObject, @preconcurrency AVSpeechSynthesizerDelegate {
+public final class BetaMailPodcastEngine: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
     public static let shared = BetaMailPodcastEngine()
 
     @Published public private(set) var isSpeaking: Bool = false

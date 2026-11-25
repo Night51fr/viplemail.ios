@@ -162,6 +162,7 @@ public enum BetaSecurityInspector {
         return count
     }
 
+    @MainActor
     public static func sanitizeHtmlTrackers(_ html: String) -> String {
         guard VipleBetaStore.shared.isEnabled(.f046) else { return html }
         return html.replacingOccurrences(

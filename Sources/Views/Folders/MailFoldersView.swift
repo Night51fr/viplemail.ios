@@ -52,40 +52,39 @@ public struct MailFoldersView: View {
 
             VStack(spacing: 8) {
                 ForEach(enabledFolderBetaModules) { fid in
-                    if let spec = VipleBetaFeatureCatalog.spec(for: fid) {
-                        Button {
-                            beta.presentedFeatureWorkspace = fid
-                        } label: {
-                            HStack(spacing: 12) {
-                                ZStack {
-                                    RoundedRectangle(cornerRadius: 11, style: .continuous)
-                                        .fill(spec.category.accentColor.opacity(0.14))
-                                        .frame(width: 38, height: 38)
-                                    Image(systemName: spec.icon)
-                                        .font(.system(size: 16, weight: .bold))
-                                        .foregroundStyle(spec.category.accentColor)
-                                }
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(spec.title)
-                                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                                        .foregroundStyle(VipleMailPalette.ink)
-                                        .lineLimit(1)
-                                    Text("\(spec.code) • \(spec.locationHint)")
-                                        .font(.system(size: 11.5))
-                                        .foregroundStyle(VipleMailPalette.inkMuted)
-                                        .lineLimit(1)
-                                }
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 12, weight: .bold))
-                                    .foregroundStyle(VipleMailPalette.inkMuted)
+                    let spec = VipleBetaFeatureCatalog.spec(for: fid)
+                    Button {
+                        beta.presentedFeatureWorkspace = fid
+                    } label: {
+                        HStack(spacing: 12) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                    .fill(spec.category.accentColor.opacity(0.14))
+                                    .frame(width: 38, height: 38)
+                                Image(systemName: spec.icon)
+                                    .font(.system(size: 16, weight: .bold))
+                                    .foregroundStyle(spec.category.accentColor)
                             }
-                            .padding(11)
-                            .background(RoundedRectangle(cornerRadius: 15, style: .continuous).fill(VipleMailPalette.surface))
-                            .overlay(RoundedRectangle(cornerRadius: 15, style: .continuous).stroke(VipleMailPalette.border, lineWidth: 1))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(spec.title)
+                                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                                    .foregroundStyle(VipleMailPalette.ink)
+                                    .lineLimit(1)
+                                Text("\(spec.code) • \(spec.locationHint)")
+                                    .font(.system(size: 11.5))
+                                    .foregroundStyle(VipleMailPalette.inkMuted)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(VipleMailPalette.inkMuted)
                         }
-                        .buttonStyle(.plain)
+                        .padding(11)
+                        .background(RoundedRectangle(cornerRadius: 15, style: .continuous).fill(VipleMailPalette.surface))
+                        .overlay(RoundedRectangle(cornerRadius: 15, style: .continuous).stroke(VipleMailPalette.border, lineWidth: 1))
                     }
+                    .buttonStyle(.plain)
                 }
             }
         }

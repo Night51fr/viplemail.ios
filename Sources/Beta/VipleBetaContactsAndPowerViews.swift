@@ -546,10 +546,9 @@ public struct BetaNetworkDomainGraphView: View {
     private var domainClusters: [(domain: String, count: Int)] {
         let emails = vm.messages.map(\.senderEmail) + vm.contacts.map(\.contactEmail)
         let grouped = Dictionary(grouping: emails.filter { $0.contains("@") }) { BetaProductivityEngine.senderDomain(of: $0) }
-        return grouped.map { ($0.key, $0.value.count) }
-            .sorted { $0.count > $1.count }
-            .prefix(10)
-            .map { $0 }
+        let mapped: [(domain: String, count: Int)] = grouped.map { (domain: $0.key, count: $0.value.count) }
+        let sorted = mapped.sorted(by: { lhs, rhs in lhs.count > rhs.count })
+        return Array(sorted.prefix(10))
     }
 
     public var body: some View {

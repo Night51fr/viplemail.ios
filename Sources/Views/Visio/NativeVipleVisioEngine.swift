@@ -180,8 +180,8 @@ private final class VisioAudioPipeline: @unchecked Sendable {
 
         let session = AVAudioSession.sharedInstance()
         let options: AVAudioSession.CategoryOptions = speakerphoneOn
-            ? [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP]
-            : [.allowBluetooth, .allowBluetoothA2DP]
+            ? [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP]
+            : [.allowBluetoothHFP, .allowBluetoothA2DP]
         try? session.setCategory(.playAndRecord, mode: .voiceChat, options: options)
         try? session.setPreferredIOBufferDuration(0.02)
         try? session.setActive(true, options: [])
@@ -1038,7 +1038,7 @@ public final class NativeVipleVisioEngine: ObservableObject {
             isAutoSpeechCaptionsActive = false
             return
         }
-        SFSpeechRecognizer.requestAuthorization { status in
+        SFSpeechRecognizer.requestAuthorization { [weak self] status in
             Task { @MainActor [weak self] in
                 guard let self, status == .authorized, let recognizer = self.speechRecognizer, recognizer.isAvailable else {
                     return

@@ -1533,7 +1533,7 @@ public struct ComposeMailView: View {
                 .foregroundStyle(VipleMailPalette.inkSecondary)
                 .frame(width: 34, alignment: .leading)
 
-            if let user = vm.currentUser {
+            if vm.currentUser != nil {
                 Menu {
                     ForEach(vm.sendCapableMailboxes, id: \.self) { mbx in
                         let isCen = mbx.lowercased().hasSuffix("@cenelis.com")
