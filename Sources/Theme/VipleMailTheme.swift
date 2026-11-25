@@ -272,13 +272,20 @@ public enum VipleMailPalette {
         #endif
     }
 
-    // Couleurs identitaires & accents calibrés Clair / Sombre
+    // Couleurs identitaires & accents calibrés Clair / Sombre (compatibles Studio Chromatique #032)
     public static let cobaltDeep = Color(red: 0.02, green: 0.14, blue: 0.42)
     public static let primarySolid = Color(red: 0.00, green: 0.47, blue: 0.83) // #0078D4 pour fonds pleins
-    public static let primary = dynamicColor(
+    private static let defaultPrimary = dynamicColor(
         light: (0.000, 0.471, 0.831, 1.0), // #0078D4 Viple Live Blue
         dark:  (0.165, 0.565, 1.000, 1.0)  // #2A90FF Luminous Azure (contraste élevé sur ardoise OLED)
     )
+    public static var primary: Color {
+        if let rawTheme = UserDefaults.standard.string(forKey: "viple.mail.beta.fastChromaticTheme.v1"),
+           let theme = BetaChromaticTheme(rawValue: rawTheme) {
+            return theme.primaryColor
+        }
+        return defaultPrimary
+    }
     public static let azureGlow = dynamicColor(
         light: (0.160, 0.780, 0.980, 1.0), // #28C7FA
         dark:  (0.260, 0.820, 1.000, 1.0)  // #42D1FF
@@ -308,11 +315,20 @@ public enum VipleMailPalette {
         dark:  (0.973, 0.443, 0.443, 1.0)
     )
 
-    // Surfaces & hiérarchie de profondeur Clair / Sombre OLED
-    public static let background = dynamicColor(
+    // Surfaces & hiérarchie de profondeur Clair / Sombre OLED (compatible Noir Pur OLED #039)
+    private static let defaultBackground = dynamicColor(
         light: (0.949, 0.969, 1.000, 1.0), // #F2F7FF
         dark:  (0.027, 0.043, 0.078, 1.0)  // #070B14 Noir saphir OLED profond
     )
+    private static let pureOledBackground = dynamicColor(
+        light: (0.949, 0.969, 1.000, 1.0),
+        dark:  (0.000, 0.000, 0.000, 1.0)  // #000000 Noir Pur OLED 0 nit
+    )
+    public static var background: Color {
+        UserDefaults.standard.bool(forKey: "viple.mail.beta.fastOledPureBlack.v1")
+            ? pureOledBackground
+            : defaultBackground
+    }
     public static let surface = dynamicColor(
         light: (1.000, 1.000, 1.000, 1.0), // #FFFFFF
         dark:  (0.063, 0.090, 0.149, 1.0)  // #101726 Carte ardoise nuit

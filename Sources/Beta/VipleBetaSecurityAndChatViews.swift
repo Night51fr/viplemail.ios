@@ -1,6 +1,9 @@
 import Foundation
 import SwiftUI
 import CryptoKit
+#if canImport(Translation)
+import Translation
+#endif
 #if canImport(UIKit)
 import UIKit
 import LocalAuthentication
@@ -881,6 +884,8 @@ public struct BetaChatBubbleFooterAugmentation: View {
     public var onSwipeReply: (String) -> Void
 
     @State private var showTranslated: Bool = false
+    @State private var chatTargetLang: String = "en"
+    @State private var showSystemTranslation: Bool = false
 
     public init(sessionId: String, message: VipleChatMessage, onSwipeReply: @escaping (String) -> Void) {
         self.sessionId = sessionId
@@ -1019,12 +1024,30 @@ public struct BetaChatBubbleFooterAugmentation: View {
 
             // Traduction sous la bulle (#057)
             if beta.isEnabled(.f057) && showTranslated {
-                Text(BetaLocalPhrasebookTranslator.translateParagraph(message.bodyText, to: "en"))
-                    .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(VipleMailPalette.indigo)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(VipleMailPalette.indigo.opacity(0.10)))
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        ForEach(["fr", "en", "es", "de"], id: \.self) { code in
+                            Button(code.uppercased()) { chatTargetLang = code }
+                                .font(.system(size: 10, weight: chatTargetLang == code ? .black : .semibold))
+                                .foregroundStyle(chatTargetLang == code ? .white : VipleMailPalette.indigo)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(chatTargetLang == code ? VipleMailPalette.indigo : VipleMailPalette.indigo.opacity(0.12)))
+                        }
+                        #if canImport(Translation)
+                        Button("Apple Traduction") { showSystemTranslation = true }
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(VipleMailPalette.primary)
+                            .translationPresentation(isPresented: $showSystemTranslation, text: message.bodyText)
+                        #endif
+                    }
+                    Text(BetaLocalPhrasebookTranslator.translateParagraph(message.bodyText, to: chatTargetLang))
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(VipleMailPalette.indigo)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(RoundedRectangle(cornerRadius: 8).fill(VipleMailPalette.indigo.opacity(0.10)))
             }
 
             // Réactions émojis (#052) + Actions rapides (#053, #056, #057)

@@ -1,6 +1,9 @@
 import Foundation
 import SwiftUI
 import NaturalLanguage
+#if canImport(Translation)
+import Translation
+#endif
 #if canImport(UIKit)
 import UIKit
 @preconcurrency import AVFAudio
@@ -406,7 +409,7 @@ public struct BetaInboxQuickStripView: View {
     public init() {}
 
     private var hasAnyInboxBetaEnabled: Bool {
-        let ids: [VipleBetaFeatureID] = [.f001, .f002, .f003, .f004, .f005, .f006, .f008, .f009, .f010, .f011, .f018, .f093, .f095, .f100]
+        let ids: [VipleBetaFeatureID] = [.f001, .f002, .f003, .f004, .f005, .f006, .f008, .f009, .f010, .f011, .f018, .f034, .f093, .f095, .f100]
         return ids.contains(where: { beta.isEnabled($0) })
     }
 
@@ -492,6 +495,15 @@ public struct BetaInboxQuickStripView: View {
                         if beta.isEnabled(.f010) {
                             stripPill("Analytique", icon: "chart.bar.xaxis", tint: .cyan) {
                                 activeSheet = .f010
+                            }
+                        }
+                        if beta.isEnabled(.f034) {
+                            stripPill("Densité: \(beta.listDensityMode.rawValue)", icon: "rectangle.grid.1x2.fill", tint: .pink) {
+                                let all = BetaListDensityMode.allCases
+                                if let i = all.firstIndex(of: beta.listDensityMode) {
+                                    beta.listDensityMode = all[(i + 1) % all.count]
+                                    beta.saveState()
+                                }
                             }
                         }
                         if beta.isEnabled(.f093) {
@@ -1472,6 +1484,7 @@ public struct BetaBionicComfortReaderSheet: View {
 public struct BetaInlineTranslatorCard: View {
     public let text: String
     @Binding public var targetLang: String
+    @State private var showSystemNeuralTranslation: Bool = false
 
     private var detectedLanguageLabel: String {
         let rec = NLLanguageRecognizer()
@@ -1481,6 +1494,7 @@ public struct BetaInlineTranslatorCard: View {
         case .english: return "Anglais détecté"
         case .spanish: return "Espagnol détecté"
         case .german: return "Allemand détecté"
+        case .italian: return "Italien détecté"
         default: return "Langue auto-détectée"
         }
     }
@@ -1493,14 +1507,30 @@ public struct BetaInlineTranslatorCard: View {
                     .foregroundStyle(VipleMailPalette.indigo)
                 Spacer()
                 Picker("Cible", selection: $targetLang) {
-                    Text("→ FR").tag("fr")
-                    Text("→ EN").tag("en")
-                    Text("→ ES").tag("es")
-                    Text("→ DE").tag("de")
+                    Text("FR").tag("fr")
+                    Text("EN").tag("en")
+                    Text("ES").tag("es")
+                    Text("DE").tag("de")
+                    Text("IT").tag("it")
                 }
                 .pickerStyle(.segmented)
-                .frame(maxWidth: 190)
+                .frame(maxWidth: 205)
             }
+
+            #if canImport(Translation)
+            Button {
+                showSystemNeuralTranslation = true
+            } label: {
+                Label("Ouvrir la traduction neuronale complète Apple iOS", systemImage: "sparkles")
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(Capsule().fill(VipleMailPalette.indigo))
+            }
+            .buttonStyle(.plain)
+            .translationPresentation(isPresented: $showSystemNeuralTranslation, text: String(text.prefix(4000)))
+            #endif
 
             let paragraphs = text.components(separatedBy: "\n\n").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.prefix(6)
             ForEach(Array(paragraphs.enumerated()), id: \.offset) { _, para in
@@ -1526,23 +1556,41 @@ public enum BetaLocalPhrasebookTranslator {
     public static func translateParagraph(_ raw: String, to target: String) -> String {
         var out = raw
         let frToEn: [(String, String)] = [
-            ("Bonjour", "Hello"), ("Bonsoir", "Good evening"), ("Merci beaucoup", "Thank you very much"),
-            ("Merci", "Thank you"), ("Cordialement", "Best regards"), ("Bien cordialement", "Kind regards"),
-            ("Veuillez trouver ci-joint", "Please find attached"), ("pièce jointe", "attachment"),
-            ("rendez-vous", "meeting"), ("facture", "invoice"), ("urgent", "urgent"),
-            ("demain", "tomorrow"), ("aujourd'hui", "today"), ("semaine prochaine", "next week")
+            ("Veuillez trouver ci-joint", "Please find attached"), ("Je vous remercie", "Thank you"),
+            ("Suite à notre échange", "Following our conversation"), ("Bien cordialement", "Kind regards"),
+            ("Cordialement", "Best regards"), ("Bonjour", "Hello"), ("Bonsoir", "Good evening"),
+            ("Merci beaucoup", "Thank you very much"), ("Merci", "Thank you"), ("pièce jointe", "attachment"),
+            ("rendez-vous", "meeting"), ("réunion", "meeting"), ("facture", "invoice"), ("devis", "quote"),
+            ("contrat", "contract"), ("urgent", "urgent"), ("demain", "tomorrow"), ("aujourd'hui", "today"),
+            ("semaine prochaine", "next week"), ("disponible", "available"), ("confirmer", "confirm")
         ]
         let enToFr: [(String, String)] = [
-            ("Hello", "Bonjour"), ("Hi ", "Bonjour "), ("Thank you", "Merci"),
-            ("Best regards", "Cordialement"), ("Kind regards", "Bien cordialement"),
-            ("Please find attached", "Veuillez trouver ci-joint"), ("meeting", "rendez-vous"),
-            ("invoice", "facture"), ("tomorrow", "demain"), ("today", "aujourd'hui"), ("schedule", "planifier")
+            ("Please find attached", "Veuillez trouver ci-joint"), ("Following up", "Pour faire suite"),
+            ("Thank you very much", "Merci beaucoup"), ("Thank you", "Merci"), ("Best regards", "Cordialement"),
+            ("Kind regards", "Bien cordialement"), ("Good morning", "Bonjour"), ("Hello", "Bonjour"),
+            ("Hi ", "Bonjour "), ("meeting", "rendez-vous"), ("invoice", "facture"), ("quote", "devis"),
+            ("attachment", "pièce jointe"), ("tomorrow", "demain"), ("today", "aujourd'hui"),
+            ("next week", "la semaine prochaine"), ("schedule", "planifier"), ("available", "disponible")
         ]
         let pairs: [(String, String)]
         switch target {
         case "fr": pairs = enToFr
-        case "es": pairs = [("Bonjour", "Hola"), ("Merci", "Gracias"), ("Cordialement", "Saludos cordiales"), ("Hello", "Hola"), ("Thank you", "Gracias")]
-        case "de": pairs = [("Bonjour", "Guten Tag"), ("Merci", "Vielen Dank"), ("Cordialement", "Mit freundlichen Grüßen"), ("Hello", "Hallo")]
+        case "es": pairs = [
+            ("Veuillez trouver ci-joint", "Adjunto encontrará"), ("Bien cordialement", "Atentamente"),
+            ("Cordialement", "Saludos cordiales"), ("Bonjour", "Hola"), ("Merci beaucoup", "Muchas gracias"),
+            ("Merci", "Gracias"), ("rendez-vous", "cita"), ("facture", "factura"), ("demain", "mañana"),
+            ("Hello", "Hola"), ("Thank you", "Gracias")
+        ]
+        case "de": pairs = [
+            ("Veuillez trouver ci-joint", "Anbei finden Sie"), ("Cordialement", "Mit freundlichen Grüßen"),
+            ("Bonjour", "Guten Tag"), ("Merci beaucoup", "Vielen Dank"), ("Merci", "Danke"),
+            ("rendez-vous", "Termin"), ("facture", "Rechnung"), ("demain", "morgen"), ("Hello", "Hallo")
+        ]
+        case "it": pairs = [
+            ("Veuillez trouver ci-joint", "In allegato trova"), ("Cordialement", "Cordiali saluti"),
+            ("Bonjour", "Buongiorno"), ("Merci beaucoup", "Grazie mille"), ("Merci", "Grazie"),
+            ("rendez-vous", "appuntamento"), ("facture", "fattura"), ("demain", "domani"), ("Hello", "Ciao")
+        ]
         default: pairs = frToEn
         }
         for (src, dst) in pairs {

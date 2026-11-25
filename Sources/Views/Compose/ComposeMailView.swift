@@ -265,7 +265,7 @@ public struct ComposeMailView: View {
                         appleMailBodyEditor
 
                         // 5. Aperçu de la signature uniquement en mode Mail classique
-                        if !isEffectiveChatMode && vm.settings.signatureEnabled && !vm.settings.signatureHtml.isEmpty {
+                        if !isEffectiveChatMode && !resolvedPlainSignature.isEmpty && (vm.settings.signatureEnabled || beta.isEnabled(.f027)) {
                             signatureBlock
                         }
                     }
@@ -1192,7 +1192,16 @@ public struct ComposeMailView: View {
         .background(VipleMailPalette.resolvedSurface(for: colorScheme))
     }
 
-    // MARK: - Bloc Signature Automatique (Mail uniquement)
+    // MARK: - Bloc Signature Automatique (Mail uniquement, compatible Multi-Signatures #027)
+
+    private var resolvedPlainSignature: String {
+        if beta.isEnabled(.f027),
+           let selId = beta.selectedSignatureProfileId,
+           let prof = beta.signatureProfiles.first(where: { $0.id == selId }) {
+            return prof.content
+        }
+        return vm.settings.signatureHtml.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+    }
 
     private var signatureBlock: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1203,6 +1212,30 @@ public struct ComposeMailView: View {
                 Text("SIGNATURE VIPLE MAIL")
                     .font(.system(size: 10.5, weight: .black, design: .rounded))
                     .foregroundStyle(VipleMailPalette.inkMuted)
+
+                if beta.isEnabled(.f027) && !beta.signatureProfiles.isEmpty {
+                    Menu {
+                        ForEach(beta.signatureProfiles) { prof in
+                            Button {
+                                beta.selectedSignatureProfileId = prof.id
+                                beta.saveState()
+                            } label: {
+                                Label(
+                                    prof.label,
+                                    systemImage: beta.selectedSignatureProfileId == prof.id ? "checkmark.circle.fill" : "signature"
+                                )
+                            }
+                        }
+                    } label: {
+                        Text(beta.signatureProfiles.first(where: { $0.id == beta.selectedSignatureProfileId })?.label ?? "Profil")
+                            .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                            .foregroundStyle(VipleMailPalette.primary)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(VipleMailPalette.primary.opacity(0.11)))
+                    }
+                }
+
                 Spacer()
                 Button {
                     withAnimation {
@@ -1216,7 +1249,7 @@ public struct ComposeMailView: View {
             }
 
             if includeSignature {
-                Text(vm.settings.signatureHtml.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression))
+                Text(resolvedPlainSignature)
                     .font(.system(size: 13.5))
                     .foregroundStyle(VipleMailPalette.inkSecondary)
                     .padding(.top, 2)
@@ -1723,9 +1756,9 @@ public struct ComposeMailView: View {
         // #021 : Fenêtre d'annulation d'envoi (Undo Send)
         if beta.isEnabled(.f021) && !shouldOpenIMessage {
             let finalText: String
-            if includeSignature && vm.settings.signatureEnabled && !vm.settings.signatureHtml.isEmpty {
-                let cleanSig = vm.settings.signatureHtml.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-                finalText = bodyField + "\n\n-- \n" + cleanSig
+            let activeSig = resolvedPlainSignature
+            if includeSignature && !activeSig.isEmpty && !bodyField.contains("-- \n") && (vm.settings.signatureEnabled || beta.isEnabled(.f027)) {
+                finalText = bodyField + "\n\n-- \n" + activeSig
             } else {
                 finalText = bodyField
             }
@@ -1748,9 +1781,9 @@ public struct ComposeMailView: View {
 
         Task {
             let finalBodyText: String
-            if includeSignature && vm.settings.signatureEnabled && !vm.settings.signatureHtml.isEmpty {
-                let cleanSig = vm.settings.signatureHtml.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-                finalBodyText = bodyField + "\n\n-- \n" + cleanSig
+            let activeSig = resolvedPlainSignature
+            if includeSignature && !activeSig.isEmpty && !bodyField.contains("-- \n") && (vm.settings.signatureEnabled || beta.isEnabled(.f027)) {
+                finalBodyText = bodyField + "\n\n-- \n" + activeSig
             } else {
                 finalBodyText = bodyField
             }

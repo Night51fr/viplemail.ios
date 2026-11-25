@@ -553,6 +553,17 @@ private struct VipleMailHTMLWebView: UIViewRepresentable {
         ) async -> WKNavigationActionPolicy {
             if navigationAction.navigationType == .linkActivated,
                let url = navigationAction.request.url {
+                if VipleBetaStore.shared.isEnabled(.f046) {
+                    let cleanedStr = BetaSecurityInspector.stripTrackingParams(from: url.absoluteString)
+                    if cleanedStr != url.absoluteString {
+                        VipleBetaStore.shared.blockedTrackersTotalCount += 1
+                        VipleBetaStore.shared.saveState()
+                    }
+                    if let safeUrl = URL(string: cleanedStr) {
+                        await UIApplication.shared.open(safeUrl)
+                        return .cancel
+                    }
+                }
                 await UIApplication.shared.open(url)
                 return .cancel
             }

@@ -756,6 +756,16 @@ public final class VipleBetaStore: ObservableObject {
     private func persistEnabledFlags() {
         let sortedRaw = enabledIds.map(\.rawValue).sorted()
         defaults.set(sortedRaw, forKey: enabledStorageKey)
+        syncFastThemeFlags()
+    }
+
+    public func syncFastThemeFlags() {
+        if enabledIds.contains(.f032) {
+            defaults.set(selectedChromaticTheme.rawValue, forKey: "viple.mail.beta.fastChromaticTheme.v1")
+        } else {
+            defaults.removeObject(forKey: "viple.mail.beta.fastChromaticTheme.v1")
+        }
+        defaults.set(enabledIds.contains(.f039) && oledPureBlackEnabled, forKey: "viple.mail.beta.fastOledPureBlack.v1")
     }
 
     // MARK: - Persistance JSON Locale Complète
@@ -817,6 +827,7 @@ public final class VipleBetaStore: ObservableObject {
         if let encoded = try? JSONEncoder().encode(container) {
             defaults.set(encoded, forKey: stateBlobStorageKey)
         }
+        syncFastThemeFlags()
     }
 
     private func loadPersistentState() {

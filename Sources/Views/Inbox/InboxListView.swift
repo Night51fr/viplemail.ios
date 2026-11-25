@@ -45,40 +45,70 @@ public struct InboxListView: View {
             if vm.displayedMessages.isEmpty {
                 emptyMailboxState
             } else {
-                List {
-                    if !vm.pinnedDisplayedMessages.isEmpty {
-                        Section {
-                            ForEach(vm.pinnedDisplayedMessages) { msg in
-                                messageRowWithNavigationAndSwipes(msg)
-                            }
-                        } header: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "pin.fill")
-                                    .foregroundStyle(VipleMailPalette.primary)
-                                Text("ÉPINGLÉS")
-                                    .font(.system(size: 11, weight: .black, design: .rounded))
-                                    .foregroundStyle(VipleMailPalette.primary)
-                            }
-                        }
-                    }
+                ScrollViewReader { listProxy in
+                    ZStack(alignment: .bottomLeading) {
+                        List {
+                            Color.clear
+                                .frame(height: 0)
+                                .listRowInsets(.init())
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                                .id("__INBOX_TOP__")
 
-                    Section {
-                        ForEach(vm.unpinnedDisplayedMessages) { msg in
-                            messageRowWithNavigationAndSwipes(msg)
+                            if !vm.pinnedDisplayedMessages.isEmpty {
+                                Section {
+                                    ForEach(vm.pinnedDisplayedMessages) { msg in
+                                        messageRowWithNavigationAndSwipes(msg)
+                                    }
+                                } header: {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "pin.fill")
+                                            .foregroundStyle(VipleMailPalette.primary)
+                                        Text("ÉPINGLÉS")
+                                            .font(.system(size: 11, weight: .black, design: .rounded))
+                                            .foregroundStyle(VipleMailPalette.primary)
+                                    }
+                                }
+                            }
+
+                            Section {
+                                ForEach(vm.unpinnedDisplayedMessages) { msg in
+                                    messageRowWithNavigationAndSwipes(msg)
+                                }
+                            } header: {
+                                if !vm.pinnedDisplayedMessages.isEmpty {
+                                    Text("MESSAGES RÉCENTS")
+                                        .font(.system(size: 11, weight: .black, design: .rounded))
+                                        .foregroundStyle(VipleMailPalette.inkMuted)
+                                }
+                            }
                         }
-                    } header: {
-                        if !vm.pinnedDisplayedMessages.isEmpty {
-                            Text("MESSAGES RÉCENTS")
-                                .font(.system(size: 11, weight: .black, design: .rounded))
-                                .foregroundStyle(VipleMailPalette.inkMuted)
+                        .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
+                        .background(VipleMailPalette.background)
+                        .refreshable {
+                            await vm.refreshBootstrap()
+                        }
+
+                        if beta.isEnabled(.f098) && vm.displayedMessages.count > 6 && !vm.isSelectionMode {
+                            Button {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.84)) {
+                                    listProxy.scrollTo("__INBOX_TOP__", anchor: .top)
+                                }
+                            } label: {
+                                Image(systemName: "arrow.up.to.line")
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundStyle(VipleMailPalette.primary)
+                                    .frame(width: 34, height: 34)
+                                    .background(Circle().fill(VipleMailPalette.surface))
+                                    .overlay(Circle().stroke(VipleMailPalette.border, lineWidth: 1))
+                                    .shadow(color: .black.opacity(0.12), radius: 5, y: 2)
+                            }
+                            .padding(.leading, 16)
+                            .padding(.bottom, beta.isEnabled(.f036) ? 68 : 14)
+                            .accessibilityLabel("Remonter en haut de la boîte")
                         }
                     }
-                }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
-                .background(VipleMailPalette.background)
-                .refreshable {
-                    await vm.refreshBootstrap()
                 }
             }
 
@@ -772,7 +802,9 @@ public struct InboxListView: View {
                             HStack(spacing: 4) {
                                 Image(systemName: att.iconName)
                                     .font(.system(size: 10, weight: .bold))
-                                Text(att.fileName)
+                                Text(beta.isEnabled(.f034) && beta.listDensityMode == .magazine
+                                     ? "\(att.fileName) (\(att.formattedSize))"
+                                     : att.fileName)
                                     .font(.system(size: 10.5, weight: .semibold))
                                     .lineLimit(1)
                             }
