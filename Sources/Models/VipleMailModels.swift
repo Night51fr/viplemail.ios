@@ -880,7 +880,7 @@ public enum ComposeDeliveryChannel: String, CaseIterable, Identifiable, Sendable
 }
 
 public enum MailComposeMode: Equatable, Sendable {
-    case newMail(to: String = "", subject: String = "", forceMail: Bool = false, preferredFromMailbox: String? = nil)
+    case newMail(to: String = "", subject: String = "", body: String = "", forceMail: Bool = false, preferredFromMailbox: String? = nil)
     case reply(VipleMailMessage)
     case replyAll(VipleMailMessage)
     case forward(VipleMailMessage)

@@ -56,9 +56,17 @@
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Viple Mail enregistre dans votre photothèque les images reçues en pièce jointe lorsque vous le demandez.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Viple Mail utilise l'appareil photo pour vos appels vidéo Viple Visio et pour photographier un document en pièce jointe.</string>
+	<string>Viple Mail utilise l'appareil photo pour vos appels vidéo Viple Visio, le scan OCR de documents/cartes de visite et les pièces jointes.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Viple Mail utilise le microphone pour vos appels vocaux classiques et vos visioconférences Viple Visio.</string>
+	<string>Viple Mail utilise le microphone pour vos appels vocaux, vos visioconférences Viple Visio et vos messages vocaux.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Viple Mail utilise Face ID pour déverrouiller votre messagerie et votre coffre-fort chiffré lorsque la protection biométrique est activée.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Viple Mail utilise la reconnaissance vocale sur l'appareil pour générer les sous-titres en direct lors de vos appels Viple Visio.</string>
+	<key>NSCalendarsWriteOnlyAccessUsageDescription</key>
+	<string>Viple Mail exporte vos rendez-vous Viple Agenda vers votre Calendrier iOS lorsque vous le demandez.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Viple Mail synchronise vos rendez-vous Viple Agenda avec votre Calendrier iOS lorsque vous activez le pont calendrier.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

@@ -509,18 +509,30 @@ public final class VipleMailViewModel: ObservableObject {
             list = list.filter { $0.isHighPriority }
         }
 
-        let trimmedQuery = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let rawSearch = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedQuery = rawSearch.lowercased()
         if !trimmedQuery.isEmpty {
-            list = list.filter { m in
-                m.subject.lowercased().contains(trimmedQuery) ||
-                m.senderName.lowercased().contains(trimmedQuery) ||
-                m.senderEmail.lowercased().contains(trimmedQuery) ||
-                (m.effectiveVerifiedOrganization?.lowercased().contains(trimmedQuery) == true) ||
-                m.recipientEmail.lowercased().contains(trimmedQuery) ||
-                m.snippet.lowercased().contains(trimmedQuery) ||
-                m.plainBodyText.lowercased().contains(trimmedQuery)
+            if VipleBetaStore.shared.isEnabled(.f092),
+               let operatorFiltered = BetaBooleanSearchParser.filterMessages(list, rawQuery: rawSearch) {
+                list = operatorFiltered
+            } else {
+                list = list.filter { m in
+                    m.subject.lowercased().contains(trimmedQuery) ||
+                    m.senderName.lowercased().contains(trimmedQuery) ||
+                    m.senderEmail.lowercased().contains(trimmedQuery) ||
+                    (m.effectiveVerifiedOrganization?.lowercased().contains(trimmedQuery) == true) ||
+                    m.recipientEmail.lowercased().contains(trimmedQuery) ||
+                    m.snippet.lowercased().contains(trimmedQuery) ||
+                    m.plainBodyText.lowercased().contains(trimmedQuery)
+                }
             }
         }
+
+        list = BetaProductivityEngine.applyInboxBetaFilters(
+            messages: list,
+            vm: self,
+            store: VipleBetaStore.shared
+        )
 
         return list.sorted { lhs, rhs in
             if lhs.isPinned != rhs.isPinned {
@@ -1314,6 +1326,22 @@ public final class VipleMailViewModel: ObservableObject {
         }
         if idsByMailbox.isEmpty, !fallbackMbx.isEmpty {
             idsByMailbox[fallbackMbx] = messageIds
+        }
+
+        // #098 : Mémoriser l'état précédent pour « Secouer / Annuler la dernière action »
+        if VipleBetaStore.shared.isEnabled(.f098) && (action == "trash" || action == "archive" || action == "spam") {
+            var prevMap: [String: String] = [:]
+            for m in messages where idSet.contains(m.id) {
+                prevMap[m.id] = m.folder
+            }
+            if !prevMap.isEmpty {
+                VipleBetaStore.shared.lastUndoSnapshot = BetaUndoActionSnapshot(
+                    messageIds: Array(prevMap.keys),
+                    previousFolderByMessageId: prevMap,
+                    description: action == "trash" ? "Mise à la corbeille" : "Archivage",
+                    timestamp: Date()
+                )
+            }
         }
 
         // Mise à jour optimiste instantanée

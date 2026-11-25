@@ -4,6 +4,7 @@ import SwiftUI
 
 public struct InboxListView: View {
     @EnvironmentObject private var vm: VipleMailViewModel
+    @ObservedObject private var beta = VipleBetaStore.shared
     @Environment(\.colorScheme) private var colorScheme
     @State private var moveTargetSheetMessageIds: [String] = []
     @State private var isShowingMoveFolderSheet: Bool = false
@@ -13,6 +14,7 @@ public struct InboxListView: View {
     public var body: some View {
         VStack(spacing: 0) {
             folderAndSearchHeader
+            BetaInboxQuickStripView()
 
             if vm.isGuestMailboxActive, let activeGrant = vm.activeGuestGrant, !vm.isSelectionMode {
                 ActiveGuestMailboxBannerView(grant: activeGrant)
@@ -87,6 +89,12 @@ public struct InboxListView: View {
         .background(VipleMailPalette.background)
         .sheet(isPresented: $isShowingMoveFolderSheet) {
             moveToFolderPickerSheet
+        }
+        .onChange(of: vm.unreadInboxCount) { oldCount, newCount in
+            if beta.isEnabled(.f033) && oldCount > 0 && newCount == 0 {
+                beta.triggerCelebrationParticles()
+                BetaChoreographedHaptics.play(.sendCrystal)
+            }
         }
     }
 
@@ -203,6 +211,28 @@ public struct InboxListView: View {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(VipleMailPalette.resolvedSurfaceSubtle(for: colorScheme))
             )
+
+            // #092 : Puces d'opérateurs booléens Pro lors de la recherche
+            if beta.isEnabled(.f092) && !vm.searchQuery.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(["is:unread", "has:attachment", "is:vip", "is:starred", "domain:cenelis.com"], id: \.self) { op in
+                            Button {
+                                if !vm.searchQuery.contains(op) {
+                                    vm.searchQuery += (vm.searchQuery.hasSuffix(" ") ? "" : " ") + op
+                                }
+                            } label: {
+                                Text(op)
+                                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                    .foregroundStyle(VipleMailPalette.primary)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Capsule().fill(VipleMailPalette.primary.opacity(0.12)))
+                            }
+                        }
+                    }
+                }
+            }
 
             // Onglets Prioritaire / Autres (Focused Inbox)
             if vm.activeFolderId == "Inbox" && vm.settings.focusedInboxEnabled && vm.searchQuery.isEmpty {
@@ -453,6 +483,23 @@ public struct InboxListView: View {
                 Label(msg.isPinned ? "Désépingler" : "Épingler", systemImage: "pin.fill")
             }
             .tint(VipleMailPalette.indigo)
+
+            if beta.isEnabled(.f001) {
+                Button {
+                    let wake = Date().addingTimeInterval(14 * 3600)
+                    beta.snoozedMails[msg.id] = BetaSnoozedMail(
+                        messageId: msg.id,
+                        subject: msg.subject,
+                        senderName: msg.senderName,
+                        wakeAt: wake
+                    )
+                    beta.saveState()
+                    vm.showToast("😴 Courrier mis en sommeil jusqu'à demain")
+                } label: {
+                    Label("Snooze", systemImage: "moon.zzz.fill")
+                }
+                .tint(.purple)
+            }
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(role: .destructive) {
@@ -664,32 +711,44 @@ public struct InboxListView: View {
                         .foregroundStyle(msg.isRead ? VipleMailPalette.inkMuted : VipleMailPalette.primary)
                 }
 
-                Text(msg.subject)
-                    .font(.system(size: 14, weight: msg.isRead ? .medium : .bold))
-                    .foregroundStyle(msg.isRead ? VipleMailPalette.inkSecondary : VipleMailPalette.ink)
-                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(beta.isEnabled(.f050) && beta.isPublicStealthMaskActive ? "••••••••••••" : msg.subject)
+                        .font(.system(size: 14, weight: msg.isRead ? .medium : .bold))
+                        .foregroundStyle(msg.isRead ? VipleMailPalette.inkSecondary : VipleMailPalette.ink)
+                        .lineLimit(1)
 
-                HStack(alignment: .top, spacing: 8) {
-                    Text(msg.snippet.isEmpty ? msg.plainBodyText : msg.snippet)
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(VipleMailPalette.inkMuted)
-                        .lineLimit(2)
-
-                    Spacer(minLength: 4)
-
-                    Button {
-                        Task {
-                            await vm.performMessageAction(
-                                messageIds: [msg.id],
-                                action: "toggle_star"
-                            )
-                        }
-                    } label: {
-                        Image(systemName: msg.isStarred ? "star.fill" : "star")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(msg.isStarred ? VipleMailPalette.starYellow : VipleMailPalette.inkMuted.opacity(0.6))
+                    if beta.isEnabled(.f007), beta.stickyNotesByMessage[msg.id] != nil {
+                        Image(systemName: "note.text")
+                            .font(.system(size: 11.5, weight: .bold))
+                            .foregroundStyle(.orange)
                     }
-                    .buttonStyle(.plain)
+                }
+
+                if !(beta.isEnabled(.f034) && beta.listDensityMode == .compact) {
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(beta.isEnabled(.f050) && beta.isPublicStealthMaskActive
+                             ? "Aperçu masqué en Mode Confidentialité Discrète"
+                             : (msg.snippet.isEmpty ? msg.plainBodyText : msg.snippet))
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(VipleMailPalette.inkMuted)
+                            .lineLimit(beta.isEnabled(.f034) && beta.listDensityMode == .magazine ? 3 : 2)
+
+                        Spacer(minLength: 4)
+
+                        Button {
+                            Task {
+                                await vm.performMessageAction(
+                                    messageIds: [msg.id],
+                                    action: "toggle_star"
+                                )
+                            }
+                        } label: {
+                            Image(systemName: msg.isStarred ? "star.fill" : "star")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(msg.isStarred ? VipleMailPalette.starYellow : VipleMailPalette.inkMuted.opacity(0.6))
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
 
                 if vm.isUnifiedInboxActive, let mbxEmail = msg.mailboxEmail, !mbxEmail.isEmpty {
@@ -755,10 +814,14 @@ public struct InboxListView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(
-                    isSelected
-                        ? VipleMailPalette.primary
-                        : (!msg.isRead ? VipleMailPalette.primary.opacity(colorScheme == .dark ? 0.44 : 0.32) : VipleMailPalette.border),
-                    lineWidth: !msg.isRead || isSelected ? 1.4 : 1
+                    (beta.isEnabled(.f035) && (msg.isVipSender || msg.shouldShowVerifiedSenderBadge))
+                        ? AnyShapeStyle(LinearGradient(colors: [.yellow, .cyan, VipleMailPalette.primary], startPoint: .topLeading, endPoint: .bottomTrailing))
+                        : AnyShapeStyle(
+                            isSelected
+                                ? VipleMailPalette.primary
+                                : (!msg.isRead ? VipleMailPalette.primary.opacity(colorScheme == .dark ? 0.44 : 0.32) : VipleMailPalette.border)
+                        ),
+                    lineWidth: (beta.isEnabled(.f035) && msg.isVipSender) ? 1.8 : (!msg.isRead || isSelected ? 1.4 : 1)
                 )
         )
     }

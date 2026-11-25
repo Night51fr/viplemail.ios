@@ -8,8 +8,13 @@ public struct ComposeMailView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var vm: VipleMailViewModel
+    @ObservedObject private var beta = VipleBetaStore.shared
 
     public let mode: MailComposeMode
+
+    @State private var markdownModeEnabled: Bool = false
+    @State private var preSendGuardWarnings: [String] = []
+    @State private var isShowingPreSendGuardAlert: Bool = false
 
     @State private var toField: String = ""
     @State private var ccField: String = ""
@@ -245,6 +250,18 @@ public struct ComposeMailView: View {
                             }
                         }
 
+                        if !isEffectiveChatMode {
+                            BetaComposerAugmentationBar(
+                                toField: $toField,
+                                subjectField: $subjectField,
+                                bodyField: $bodyField,
+                                attachments: $attachments,
+                                markdownModeEnabled: $markdownModeEnabled,
+                                fromMailbox: effectiveSenderEmail,
+                                onDismissComposer: { dismiss() }
+                            )
+                        }
+
                         appleMailBodyEditor
 
                         // 5. Aperçu de la signature uniquement en mode Mail classique
@@ -254,6 +271,8 @@ public struct ComposeMailView: View {
                     }
                 }
                 .background(VipleMailPalette.resolvedSurface(for: colorScheme))
+
+                BetaPinnedReferenceDrawerOverlay()
 
                 appleMailBottomToolbar
             }
@@ -373,6 +392,14 @@ public struct ComposeMailView: View {
             }
             .sheet(isPresented: $isShowingContactPicker) {
                 contactPickerSheet
+            }
+            .alert("Vérification avant envoi (#025)", isPresented: $isShowingPreSendGuardAlert) {
+                Button("Envoyer quand même") {
+                    submitNow(bypassGuardrail: true)
+                }
+                Button("Revenir au brouillon", role: .cancel) {}
+            } message: {
+                Text(preSendGuardWarnings.joined(separator: "\n"))
             }
             .sheet(isPresented: $isShowingVipleCalendarSheet) {
                 VipleCalendarComposerSheet(defaultTitle: subjectField) { chosenTitle, formulaLine in
@@ -1581,7 +1608,7 @@ public struct ComposeMailView: View {
         isShowingMailRteHelp = false
         let fallbackSender = vm.defaultSendingMailbox
         switch mode {
-        case .newMail(let to, let subject, let forceMail, let preferredFromMailbox):
+        case .newMail(let to, let subject, let initialBody, let forceMail, let preferredFromMailbox):
             if let pref = preferredFromMailbox?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
                !pref.isEmpty {
                 senderMailbox = pref
@@ -1590,6 +1617,9 @@ public struct ComposeMailView: View {
             }
             toField = to
             subjectField = subject
+            if !initialBody.isEmpty {
+                bodyField = initialBody
+            }
             if forceMail {
                 hasManualChannelChoice = true
                 deliveryChannel = .mail
@@ -1647,7 +1677,7 @@ public struct ComposeMailView: View {
         }
     }
 
-    private func submitNow(forceIMessageAfterSend: Bool = false) {
+    private func submitNow(forceIMessageAfterSend: Bool = false, bypassGuardrail: Bool = false) {
         if isEffectiveChatMode, let peer = detectedVipleMailRecipient {
             Task {
                 if let session = await vm.sendChatMessage(
@@ -1666,11 +1696,55 @@ public struct ComposeMailView: View {
             return
         }
 
+        // #025 : Garde-fou pré-envoi (oubli pièce jointe, objet vide, heure tardive)
+        if beta.isEnabled(.f025) && !bypassGuardrail {
+            let warnings = BetaComposerIntelligence.preSendAuditWarnings(
+                subject: subjectField,
+                body: bodyField,
+                hasAttachments: !attachments.isEmpty
+            )
+            if !warnings.isEmpty {
+                preSendGuardWarnings = warnings
+                isShowingPreSendGuardAlert = true
+                return
+            }
+        }
+
         let shouldOpenIMessage = notifyViaIMessageAfterSend || forceIMessageAfterSend
         let targetRecipientsRaw = toField
         let currentSubj = subjectField.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? "(Sans objet)"
             : subjectField.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let computedHtml: String? = (beta.isEnabled(.f024) && markdownModeEnabled)
+            ? BetaComposerIntelligence.renderMarkdownToRichHTML(bodyField)
+            : nil
+
+        // #021 : Fenêtre d'annulation d'envoi (Undo Send)
+        if beta.isEnabled(.f021) && !shouldOpenIMessage {
+            let finalText: String
+            if includeSignature && vm.settings.signatureEnabled && !vm.settings.signatureHtml.isEmpty {
+                let cleanSig = vm.settings.signatureHtml.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                finalText = bodyField + "\n\n-- \n" + cleanSig
+            } else {
+                finalText = bodyField
+            }
+            BetaOutboxCoordinator.shared.enqueueWithUndoWindow(
+                vm: vm,
+                fromMailbox: effectiveSenderEmail,
+                to: toField,
+                cc: ccField,
+                bcc: bccField,
+                subject: subjectField,
+                bodyText: finalText,
+                bodyHtml: computedHtml,
+                priority: priority,
+                attachments: attachments,
+                disableMailRte: disableMailRteForThisMail
+            )
+            dismiss()
+            return
+        }
 
         Task {
             let finalBodyText: String
@@ -1687,7 +1761,7 @@ public struct ComposeMailView: View {
                 bcc: bccField,
                 subject: subjectField,
                 bodyText: finalBodyText,
-                bodyHtml: nil,
+                bodyHtml: computedHtml,
                 priority: priority,
                 threadId: threadId,
                 replyToMessageId: replyToMessageId,
@@ -1699,6 +1773,8 @@ public struct ComposeMailView: View {
                 disableMailRte: disableMailRteForThisMail
             )
             if ok {
+                beta.triggerCelebrationParticles()
+                BetaChoreographedHaptics.play(.sendCrystal)
                 let directLink = vm.lastSentDirectMailLink
                 let rcptPhones = vm.preferredIMessageRecipients(for: targetRecipientsRaw)
                 dismiss()

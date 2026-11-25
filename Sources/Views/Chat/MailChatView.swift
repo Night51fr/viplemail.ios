@@ -197,9 +197,18 @@ public struct MailChatView: View {
     private func chatSessionRow(_ session: VipleChatSession) -> some View {
         let isSentByMe = session.lastSenderEmail.lowercased() == vm.effectiveChatMailboxEmail.lowercased()
             || session.lastSenderEmail.lowercased() == vm.currentEmail.lowercased()
-        let previewText = session.lastMessageSnippet.isEmpty
-            ? "Nouvelle discussion instantanée"
-            : (isSentByMe ? "Vous : \(session.lastMessageSnippet)" : session.lastMessageSnippet)
+        let savedDraft = VipleBetaStore.shared.isEnabled(.f058)
+            ? (VipleBetaStore.shared.chatAutoDraftBySession[session.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            : ""
+        let previewText: String = {
+            if !savedDraft.isEmpty {
+                return "✏️ Brouillon : \(savedDraft)"
+            }
+            if session.lastMessageSnippet.isEmpty {
+                return "Nouvelle discussion instantanée"
+            }
+            return isSentByMe ? "Vous : \(session.lastMessageSnippet)" : session.lastMessageSnippet
+        }()
 
         return HStack(spacing: 12) {
             VipleMailAvatarView(
@@ -430,9 +439,11 @@ public struct MailChatView: View {
 public struct MailChatConversationView: View {
     @EnvironmentObject private var vm: VipleMailViewModel
     @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var beta = VipleBetaStore.shared
     public let session: VipleChatSession
 
     @State private var draftText: String = ""
+    @State private var quotedReplyPreview: String? = nil
     @State private var stagedAttachments: [VipleMailAttachment] = []
     @State private var selectedPhotoItem: PhotosPickerItem? = nil
     @State private var isShowingFileImporter: Bool = false
@@ -446,6 +457,24 @@ public struct MailChatConversationView: View {
         vm.openedChatSession ?? session
     }
 
+    private var visibleChatMessages: [VipleChatMessage] {
+        guard beta.isEnabled(.f059),
+              let ttlSeconds = beta.chatEphemeralSecondsBySession[activeSession.id],
+              ttlSeconds > 0 else {
+            return vm.activeChatMessages
+        }
+        let iso = ISO8601DateFormatter()
+        let isoFrac = ISO8601DateFormatter()
+        isoFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let now = Date()
+        return vm.activeChatMessages.filter { msg in
+            guard let dt = isoFrac.date(from: msg.createdAt) ?? iso.date(from: msg.createdAt) else {
+                return true
+            }
+            return now.timeIntervalSince(dt) < TimeInterval(ttlSeconds)
+        }
+    }
+
     private var canSend: Bool {
         (!draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !stagedAttachments.isEmpty)
             && !vm.isSendingChatMessage
@@ -455,42 +484,60 @@ public struct MailChatConversationView: View {
     public var body: some View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
-                ScrollView(showsIndicators: false) {
-                    LazyVStack(spacing: 10) {
-                        if vm.activeChatMessages.isEmpty {
-                            emptyConversationBanner
-                        } else {
-                            ForEach(Array(vm.activeChatMessages.enumerated()), id: \.element.id) { idx, msg in
-                                let prevDay = idx > 0 ? vm.activeChatMessages[idx - 1].formattedDayKey : ""
-                                if msg.formattedDayKey != prevDay {
-                                    daySeparatorPill(msg.formattedDayKey)
-                                }
-                                chatBubbleRow(msg)
-                                    .id(msg.id)
-                            }
+                VStack(spacing: 0) {
+                    BetaChatConversationTopAugmentationBar(
+                        session: activeSession,
+                        messages: visibleChatMessages
+                    ) { targetMessageId in
+                        withAnimation(.spring(response: 0.30, dampingFraction: 0.84)) {
+                            proxy.scrollTo(targetMessageId, anchor: .center)
                         }
-                        Color.clear
-                            .frame(height: 4)
-                            .id("__CHAT_BOTTOM__")
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 14)
-                }
-                .background(VipleMailPalette.background)
-                .onChange(of: vm.activeChatMessages.count) { _, _ in
-                    withAnimation(.easeOut(duration: 0.22)) {
+
+                    ScrollView(showsIndicators: false) {
+                        LazyVStack(spacing: 10) {
+                            if visibleChatMessages.isEmpty {
+                                emptyConversationBanner
+                            } else {
+                                ForEach(Array(visibleChatMessages.enumerated()), id: \.element.id) { idx, msg in
+                                    let prevDay = idx > 0 ? visibleChatMessages[idx - 1].formattedDayKey : ""
+                                    if msg.formattedDayKey != prevDay {
+                                        daySeparatorPill(msg.formattedDayKey)
+                                    }
+                                    chatBubbleRow(msg)
+                                        .id(msg.id)
+                                }
+                            }
+                            Color.clear
+                                .frame(height: 4)
+                                .id("__CHAT_BOTTOM__")
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 14)
+                    }
+                    .background(VipleMailPalette.background)
+                    .onChange(of: visibleChatMessages.count) { _, _ in
+                        withAnimation(.easeOut(duration: 0.22)) {
+                            proxy.scrollTo("__CHAT_BOTTOM__", anchor: .bottom)
+                        }
+                    }
+                    .task {
+                        try? await Task.sleep(nanoseconds: 120_000_000)
                         proxy.scrollTo("__CHAT_BOTTOM__", anchor: .bottom)
                     }
-                }
-                .task {
-                    try? await Task.sleep(nanoseconds: 120_000_000)
-                    proxy.scrollTo("__CHAT_BOTTOM__", anchor: .bottom)
                 }
             }
 
             if !stagedAttachments.isEmpty || isUploadingAttachment {
                 stagedAttachmentsBar
             }
+
+            BetaChatComposerExtrasBar(
+                session: activeSession,
+                draftText: $draftText,
+                quotedMessagePreview: $quotedReplyPreview,
+                stagedAttachments: $stagedAttachments
+            )
 
             chatInputBottomBar
         }
@@ -678,6 +725,23 @@ public struct MailChatConversationView: View {
         ) { result in
             handleImportedFile(result)
         }
+        .onAppear {
+            if beta.isEnabled(.f058), draftText.isEmpty,
+               let saved = beta.chatAutoDraftBySession[activeSession.id], !saved.isEmpty {
+                draftText = saved
+            }
+        }
+        .onChange(of: draftText) { _, newValue in
+            if beta.isEnabled(.f058) {
+                let clean = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                if clean.isEmpty {
+                    beta.chatAutoDraftBySession.removeValue(forKey: activeSession.id)
+                } else {
+                    beta.chatAutoDraftBySession[activeSession.id] = newValue
+                }
+                beta.saveState()
+            }
+        }
         .task(id: activeSession.id) {
             await vm.reloadActiveChatMessages(silent: false)
             while !Task.isCancelled {
@@ -798,7 +862,31 @@ public struct MailChatConversationView: View {
                     }
                 }
                 .padding(.horizontal, 4)
+
+                BetaChatBubbleFooterAugmentation(
+                    sessionId: activeSession.id,
+                    message: msg
+                ) { quote in
+                    withAnimation(.spring(response: 0.26, dampingFraction: 0.8)) {
+                        quotedReplyPreview = quote
+                    }
+                    BetaChoreographedHaptics.play(.tapCrisp)
+                }
             }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 28, coordinateSpace: .local)
+                    .onEnded { val in
+                        guard beta.isEnabled(.f053),
+                              val.startLocation.x >= 44,
+                              abs(val.translation.width) > 48,
+                              abs(val.translation.height) < 36 else { return }
+                        let snippet = msg.bodyText.isEmpty ? "Pièce jointe" : String(msg.bodyText.prefix(70))
+                        withAnimation(.spring(response: 0.26, dampingFraction: 0.8)) {
+                            quotedReplyPreview = snippet
+                        }
+                        BetaChoreographedHaptics.play(.tapCrisp)
+                    }
+            )
 
             if !isMine {
                 Spacer(minLength: 52)
@@ -904,15 +992,27 @@ public struct MailChatConversationView: View {
     }
 
     private func sendChatNow() {
-        let text = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawText = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
         let atts = stagedAttachments
-        guard !text.isEmpty || !atts.isEmpty else { return }
+        guard !rawText.isEmpty || !atts.isEmpty else { return }
+        let finalText: String
+        if beta.isEnabled(.f053), let quote = quotedReplyPreview, !quote.isEmpty {
+            finalText = "↩︎ « \(quote) »\n\(rawText)"
+        } else {
+            finalText = rawText
+        }
         draftText = ""
+        quotedReplyPreview = nil
         stagedAttachments = []
+        if beta.isEnabled(.f058) {
+            beta.chatAutoDraftBySession.removeValue(forKey: activeSession.id)
+            beta.saveState()
+        }
+        BetaChoreographedHaptics.play(.sendCrystal)
         Task {
             _ = await vm.sendChatMessage(
                 to: activeSession.peerEmail,
-                text: text,
+                text: finalText,
                 attachments: atts
             )
         }

@@ -4,6 +4,8 @@ import SwiftUI
 
 public struct VipleMailMainView: View {
     @EnvironmentObject private var vm: VipleMailViewModel
+    @ObservedObject private var beta = VipleBetaStore.shared
+    @ObservedObject private var outbox = BetaOutboxCoordinator.shared
     @Environment(\.colorScheme) private var colorScheme
 
     private enum LaunchExperienceStage {
@@ -20,8 +22,12 @@ public struct VipleMailMainView: View {
 
     public var body: some View {
         ZStack {
-            VipleMailPalette.background
-                .ignoresSafeArea()
+            if beta.isEnabled(.f039) && beta.oledPureBlackEnabled && colorScheme == .dark {
+                Color.black.ignoresSafeArea()
+            } else {
+                VipleMailPalette.background
+                    .ignoresSafeArea()
+            }
 
             switch launchStage {
             case .cenelisAppsIntro:
@@ -62,7 +68,35 @@ public struct VipleMailMainView: View {
                 VipleVisioGlobalCallOverlay()
                     .environmentObject(vm)
                     .zIndex(200)
+
+                BetaCelebrationParticlesOverlay()
+                    .zIndex(220)
+
+                BetaAmberNightShieldOverlay()
+                    .zIndex(225)
+
+                BetaBiometricPrivacyShieldOverlay()
+                    .zIndex(235)
             }
+        }
+        .tint(beta.isEnabled(.f032) ? beta.selectedChromaticTheme.primaryColor : VipleMailPalette.primary)
+        .task {
+            outbox.startScheduledOutboxWatcher(vm: vm)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .vipleDeviceDidShake)) { _ in
+            guard beta.isEnabled(.f098), let snap = beta.lastUndoSnapshot else { return }
+            beta.lastUndoSnapshot = nil
+            BetaChoreographedHaptics.play(.tapCrisp)
+            Task {
+                for (mid, prevFolder) in snap.previousFolderByMessageId {
+                    await vm.performMessageAction(messageIds: [mid], action: "move", targetFolder: prevFolder, toast: "📳 Secousse détectée : action annulée")
+                }
+            }
+        }
+        .sheet(item: $beta.presentedFeatureWorkspace) { fid in
+            VipleBetaWorkspaceRouterSheet(featureId: fid)
+                .environmentObject(vm)
+                .preferredColorScheme(vm.preferredColorSchemeOverride)
         }
         .onChange(of: vm.isInitialBootstrapping) { _, isBootstrapping in
             if !isBootstrapping && vipleMailMinimumSplashDone && launchStage == .vipleMailSplash {
@@ -224,11 +258,17 @@ public struct VipleMailMainView: View {
     private var authenticatedShell: some View {
         VStack(spacing: 0) {
             ZStack(alignment: .bottomTrailing) {
+                BetaCircadianAuroraBackdropView()
+
                 // Couche 1 : Barre supérieure « Viple Mail » + Contenu de l'onglet actif (0 décalage garanti)
                 VStack(spacing: 0) {
                     topBrandHeaderBar
                         .offset(y: isDetailOverlayActive ? -72 : 0)
                         .opacity(isDetailOverlayActive ? 0 : 1)
+
+                    if !isDetailOverlayActive {
+                        BetaUpcomingVisioCountdownBanner()
+                    }
 
                     Group {
                         switch vm.selectedTab {
@@ -307,7 +347,61 @@ public struct VipleMailMainView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(alignment: .bottomLeading) {
+                BetaFloatingRadialWheelOverlay()
+            }
             .clipped()
+
+            // #020 : Tiroir flottant de référence mail
+            BetaPinnedReferenceDrawerOverlay()
+
+            // #021 : Barre de compte à rebours « Annuler l'envoi »
+            if beta.isEnabled(.f021), let pending = outbox.pendingUndo {
+                HStack(spacing: 10) {
+                    ProgressView().tint(.white).scaleEffect(0.85)
+                    Text("Envoi de « \(pending.subject.isEmpty ? "(Sans objet)" : pending.subject) » dans \(pending.secondsRemaining)s…")
+                        .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    Spacer()
+                    Button("Annuler") {
+                        outbox.cancelPendingSendAndRestoreComposer(vm: vm)
+                    }
+                    .font(.system(size: 12.5, weight: .black, design: .rounded))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 11)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.yellow))
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(Color(red: 0.08, green: 0.12, blue: 0.22))
+            }
+
+            // #098 : Bannière d'annulation rapide de la dernière action de tri
+            if beta.isEnabled(.f098), let snap = beta.lastUndoSnapshot, Date().timeIntervalSince(snap.timestamp) < 12 {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.uturn.backward.circle.fill").foregroundStyle(.cyan)
+                    Text("\(snap.description) (\(snap.messageIds.count))")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                    Spacer()
+                    Button("Rétablir") {
+                        let copy = snap
+                        beta.lastUndoSnapshot = nil
+                        Task {
+                            for (mid, prevFolder) in copy.previousFolderByMessageId {
+                                await vm.performMessageAction(messageIds: [mid], action: "move", targetFolder: prevFolder, toast: "Action annulée")
+                            }
+                        }
+                    }
+                    .font(.system(size: 12, weight: .black, design: .rounded))
+                    .foregroundStyle(.cyan)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(Color.black.opacity(0.84))
+            }
 
             bottomNavigationBar
         }
@@ -321,6 +415,34 @@ public struct VipleMailMainView: View {
             VipleMailHorizontalLogoView(height: compact ? 29 : 36, showSubtitle: !compact)
 
             Spacer(minLength: 4)
+
+            if beta.isEnabled(.f091) {
+                Button {
+                    beta.presentedFeatureWorkspace = .f091
+                } label: {
+                    Image(systemName: "command")
+                        .font(.system(size: compact ? 13 : 14.5, weight: .bold))
+                        .foregroundStyle(VipleMailPalette.primary)
+                        .frame(width: compact ? 29 : 34, height: compact ? 29 : 34)
+                        .background(Circle().fill(VipleMailPalette.surfaceSubtle))
+                        .overlay(Circle().stroke(VipleMailPalette.border, lineWidth: 1))
+                }
+                .accessibilityLabel("Palette de commandes universelle")
+            }
+
+            if beta.isEnabled(.f050) {
+                Button {
+                    withAnimation { beta.isPublicStealthMaskActive.toggle() }
+                } label: {
+                    Image(systemName: beta.isPublicStealthMaskActive ? "eye.slash.fill" : "eye.fill")
+                        .font(.system(size: compact ? 13 : 14.5, weight: .bold))
+                        .foregroundStyle(beta.isPublicStealthMaskActive ? .orange : VipleMailPalette.inkSecondary)
+                        .frame(width: compact ? 29 : 34, height: compact ? 29 : 34)
+                        .background(Circle().fill(VipleMailPalette.surfaceSubtle))
+                        .overlay(Circle().stroke(VipleMailPalette.border, lineWidth: 1))
+                }
+                .accessibilityLabel("Mode confidentialité discrète")
+            }
 
             Button {
                 vm.isShowingAcademyHelp = true

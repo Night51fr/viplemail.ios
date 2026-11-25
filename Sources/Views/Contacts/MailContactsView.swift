@@ -3,13 +3,21 @@ import SwiftUI
 // MARK: - Carnet d'Adresses Viple Live & Contacts VIP « Viple Mail » (Synchronisé avec dbo.WL_Contacts)
 
 public struct MailContactsView: View {
+    private struct CrmSheetSelection: Identifiable {
+        let id = UUID()
+        let email: String
+        let displayName: String
+    }
+
     @EnvironmentObject private var vm: VipleMailViewModel
     @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var beta = VipleBetaStore.shared
     @State private var searchText: String = ""
     @State private var vipOnlyFilter: Bool = false
     @State private var sectionFilter: Int = 0 // 0: Tous (Amis + Contacts), 1: Amis Viple Live, 2: Contacts
     @State private var isShowingAddFriendSheet: Bool = false
     @State private var addFriendHandleOrEmail: String = ""
+    @State private var activeCrmSelection: CrmSheetSelection? = nil
 
     // Création / Édition d'un contact
     @State private var editingContactId: String? = nil
@@ -53,6 +61,8 @@ public struct MailContactsView: View {
         VStack(spacing: 0) {
             contactsHeader
 
+            BetaContactsCrmToolbarStrip()
+
             ScrollView(showsIndicators: false) {
                 LazyVStack(alignment: .leading, spacing: 16) {
                     if sectionFilter == 0 || sectionFilter == 1 {
@@ -76,6 +86,11 @@ public struct MailContactsView: View {
         }
         .sheet(isPresented: $isShowingAddFriendSheet) {
             addVipleFriendSheet
+        }
+        .sheet(item: $activeCrmSelection) { sel in
+            BetaContactCrm360Sheet(contactEmail: sel.email, displayName: sel.displayName)
+                .environmentObject(vm)
+                .preferredColorScheme(vm.preferredColorSchemeOverride)
         }
     }
 
@@ -224,6 +239,24 @@ public struct MailContactsView: View {
                     .foregroundStyle(VipleMailPalette.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+
+                if beta.isEnabled(.f082) || beta.isEnabled(.f089) {
+                    HStack(spacing: 6) {
+                        if beta.isEnabled(.f082) {
+                            let warmth = BetaCrmIntelligence.warmthScore(for: friend.email, messages: vm.messages)
+                            Text("🔥 \(warmth)°")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(warmth >= 50 ? VipleMailPalette.success : .orange)
+                        }
+                        if beta.isEnabled(.f089) {
+                            let tz = beta.contactTimezonesByEmail[friend.email.lowercased()] ?? "Europe/Paris"
+                            let badge = BetaCrmIntelligence.localTimeBadge(for: tz)
+                            Text("🕒 \(badge.clock)")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(badge.reachable ? VipleMailPalette.inkSecondary : VipleMailPalette.inkMuted)
+                        }
+                    }
+                }
             }
 
             Spacer(minLength: 4)
@@ -268,6 +301,13 @@ public struct MailContactsView: View {
                 }
 
                 Menu {
+                    if beta.isEnabled(.f081) || beta.isEnabled(.f090) {
+                        Button {
+                            activeCrmSelection = CrmSheetSelection(email: friend.email, displayName: friend.displayName)
+                        } label: {
+                            Label("Fiche CRM 360° & Mémos", systemImage: "person.text.rectangle.fill")
+                        }
+                    }
                     Button {
                         vm.presentComposer(.newMail(to: friend.email, forceMail: true))
                     } label: {
@@ -481,6 +521,25 @@ public struct MailContactsView: View {
                             .foregroundStyle(VipleMailPalette.inkMuted)
                             .lineLimit(1)
                     }
+                    if beta.isEnabled(.f082) {
+                        let warmth = BetaCrmIntelligence.warmthScore(for: contact.contactEmail, messages: vm.messages)
+                        Text("• 🔥\(warmth)°")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(warmth >= 50 ? VipleMailPalette.success : .orange)
+                    }
+                    if beta.isEnabled(.f089) {
+                        let tz = beta.contactTimezonesByEmail[contact.contactEmail.lowercased()] ?? "Europe/Paris"
+                        let badge = BetaCrmIntelligence.localTimeBadge(for: tz)
+                        Text("• 🕒\(badge.clock)")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(badge.reachable ? VipleMailPalette.inkSecondary : VipleMailPalette.inkMuted)
+                    }
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if beta.isEnabled(.f081) || beta.isEnabled(.f090) {
+                    activeCrmSelection = CrmSheetSelection(email: contact.contactEmail, displayName: contact.displayName)
                 }
             }
 
@@ -538,6 +597,13 @@ public struct MailContactsView: View {
                 .accessibilityLabel("Envoyer un e-mail")
 
                 Menu {
+                    if beta.isEnabled(.f081) || beta.isEnabled(.f090) {
+                        Button {
+                            activeCrmSelection = CrmSheetSelection(email: contact.contactEmail, displayName: contact.displayName)
+                        } label: {
+                            Label("Fiche CRM 360° & Mémos", systemImage: "person.text.rectangle.fill")
+                        }
+                    }
                     Button {
                         prepareEditContactForm(contact)
                         vm.isShowingAddContactSheet = true

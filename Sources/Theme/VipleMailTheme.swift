@@ -782,6 +782,7 @@ public struct VipleMailHorizontalLogoView: View {
 
 public struct VipleMailAvatarView: View {
     @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var beta = VipleBetaStore.shared
     public let name: String
     public let email: String
     public var avatarUrl: String? = nil
@@ -792,6 +793,7 @@ public struct VipleMailAvatarView: View {
     #if canImport(UIKit)
     @State private var loadedImage: UIImage? = nil
     #endif
+    @State private var livingHaloSpin: Bool = false
 
     public init(
         name: String,
@@ -819,9 +821,35 @@ public struct VipleMailAvatarView: View {
         return String(src.prefix(2)).uppercased()
     }
 
+    private var isSovereignVipleDomain: Bool {
+        let low = email.lowercased()
+        return low.hasSuffix("@viplemail.fr") || low.hasSuffix("@cenelis.com")
+    }
+
     public var body: some View {
         ZStack(alignment: .bottomTrailing) {
             ZStack {
+                if beta.isEnabled(.f038) && (isSovereignVipleDomain || isVip || isUnread) {
+                    Circle()
+                        .stroke(
+                            AngularGradient(
+                                colors: isVip
+                                    ? [VipleMailPalette.vipGold, .yellow, .orange, VipleMailPalette.vipGold]
+                                    : [VipleMailPalette.primary, .cyan, VipleMailPalette.indigo, VipleMailPalette.primary],
+                                center: .center
+                            ),
+                            lineWidth: max(2.0, size * 0.055)
+                        )
+                        .frame(width: size + 5, height: size + 5)
+                        .rotationEffect(.degrees(livingHaloSpin ? 360 : 0))
+                        .onAppear {
+                            guard !livingHaloSpin else { return }
+                            withAnimation(.linear(duration: 6.5).repeatForever(autoreverses: false)) {
+                                livingHaloSpin = true
+                            }
+                        }
+                }
+
                 Circle()
                     .fill(VipleMailPalette.avatarGradient(for: email.isEmpty ? name : email))
                     .frame(width: size, height: size)

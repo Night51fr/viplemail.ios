@@ -10,6 +10,8 @@ public struct MailSettingsView: View {
     @EnvironmentObject private var vm: VipleMailViewModel
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var notifManager = VipleMailNotificationManager.shared
+    @ObservedObject private var beta = VipleBetaStore.shared
+    @State private var isShowingBetaFeaturesSheet: Bool = false
 
     @State private var displayNameField: String = ""
     @State private var personalMessageField: String = ""
@@ -39,6 +41,10 @@ public struct MailSettingsView: View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 18) {
                 accountProfileCard
+                betaFeaturesEntryCard
+                if [.f047, .f049, .f093, .f097, .f099].contains(where: { beta.isEnabled($0) }) {
+                    activeBetaSettingsShortcutsCard
+                }
                 academyEmbeddedHelpCard
                 guestAccessAndIMessageCard
                 connectedDevicesEntryCard
@@ -117,6 +123,11 @@ public struct MailSettingsView: View {
             deleteAccountConfirmationSheet
                 .preferredColorScheme(vm.preferredColorSchemeOverride)
         }
+        .sheet(isPresented: $isShowingBetaFeaturesSheet) {
+            VipleBetaSettingsView()
+                .environmentObject(vm)
+                .preferredColorScheme(vm.preferredColorSchemeOverride)
+        }
         .onAppear {
             displayNameField = vm.currentUser?.displayName ?? ""
             personalMessageField = vm.currentUser?.personalMessage ?? ""
@@ -139,6 +150,85 @@ public struct MailSettingsView: View {
     }
 
     // MARK: - Carte « Accès Invité Temporaire (1h, 8h, 24h, 48h) & iMessage »
+
+    // MARK: - Carte Proéminente « Fonctions Beta (100 Fonctionnalités — Cases à Cocher & Tout Activer) »
+
+    private var betaFeaturesEntryCard: some View {
+        Button {
+            isShowingBetaFeaturesSheet = true
+        } label: {
+            HStack(spacing: 14) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(VipleMailPalette.heroGradient)
+                        .frame(width: 48, height: 48)
+                    Image(systemName: "flask.fill")
+                        .font(.system(size: 21, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text("Fonctions Beta")
+                            .font(.system(size: 15.5, weight: .black, design: .rounded))
+                            .foregroundStyle(VipleMailPalette.ink)
+                        Text("\(beta.enabledCount) / 100")
+                            .font(.system(size: 10, weight: .black, design: .monospaced))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(beta.enabledCount > 0 ? VipleMailPalette.success : VipleMailPalette.primary))
+                    }
+                    Text("100 fonctions complètes (Productivité, Lecture, Rédaction, Motion, Sécurité, Chat, Visio, Agenda, CRM, Power-Tools) — désactivées par défaut.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(VipleMailPalette.inkSecondary)
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(VipleMailPalette.inkMuted)
+            }
+            .vipleMailCard(cornerRadius: 18, padding: 14)
+        }
+    }
+
+    private var activeBetaSettingsShortcutsCard: some View {
+        let activeSettingsTools: [VipleBetaFeatureID] = [.f097, .f047, .f049, .f093, .f099].filter { beta.isEnabled($0) }
+        return VStack(alignment: .leading, spacing: 10) {
+            Label("Outils Beta Actifs (Diagnostic, Sécurité & Règles)", systemImage: "cpu.fill")
+                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .foregroundStyle(VipleMailPalette.ink)
+
+            ForEach(activeSettingsTools) { fid in
+                let spec = fid.spec
+                Button {
+                    beta.presentedFeatureWorkspace = fid
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: spec.icon)
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(spec.category.accentColor)
+                            .frame(width: 28, height: 28)
+                            .background(RoundedRectangle(cornerRadius: 8).fill(spec.category.accentColor.opacity(0.14)))
+                        Text(spec.title)
+                            .font(.system(size: 13.5, weight: .semibold, design: .rounded))
+                            .foregroundStyle(VipleMailPalette.ink)
+                            .lineLimit(1)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11.5, weight: .bold))
+                            .foregroundStyle(VipleMailPalette.inkMuted)
+                    }
+                    .padding(.vertical, 4)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .vipleMailCard(cornerRadius: 18, padding: 14)
+    }
 
     private var academyEmbeddedHelpCard: some View {
         Button {

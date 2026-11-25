@@ -5,6 +5,7 @@ import SwiftUI
 public struct MailFoldersView: View {
     @EnvironmentObject private var vm: VipleMailViewModel
     @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var beta = VipleBetaStore.shared
     @State private var newFolderName: String = ""
 
     public init() {}
@@ -17,10 +18,17 @@ public struct MailFoldersView: View {
         vm.folders.filter { !$0.isSystem }
     }
 
+    private var enabledFolderBetaModules: [VipleBetaFeatureID] {
+        [.f100, .f008, .f010, .f044, .f093, .f095, .f099].filter { beta.isEnabled($0) }
+    }
+
     public var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 18) {
                 storageQuotaBannerCard
+                if !enabledFolderBetaModules.isEmpty {
+                    betaCloudToolsSection
+                }
                 connectedMailboxesSection
                 systemFoldersSection
                 if !vm.isUnifiedInboxActive {
@@ -33,6 +41,53 @@ public struct MailFoldersView: View {
         .navigationBarHidden(true)
         .sheet(isPresented: $vm.isShowingCreateFolderSheet) {
             createFolderSheet
+        }
+    }
+
+    private var betaCloudToolsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("MODULES BETA & STOCKAGE SOUVERAIN")
+                .font(.system(size: 11.5, weight: .black, design: .rounded))
+                .foregroundStyle(VipleMailPalette.inkMuted)
+
+            VStack(spacing: 8) {
+                ForEach(enabledFolderBetaModules) { fid in
+                    if let spec = VipleBetaFeatureCatalog.spec(for: fid) {
+                        Button {
+                            beta.presentedFeatureWorkspace = fid
+                        } label: {
+                            HStack(spacing: 12) {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                        .fill(spec.category.accentColor.opacity(0.14))
+                                        .frame(width: 38, height: 38)
+                                    Image(systemName: spec.icon)
+                                        .font(.system(size: 16, weight: .bold))
+                                        .foregroundStyle(spec.category.accentColor)
+                                }
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(spec.title)
+                                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                                        .foregroundStyle(VipleMailPalette.ink)
+                                        .lineLimit(1)
+                                    Text("\(spec.code) • \(spec.locationHint)")
+                                        .font(.system(size: 11.5))
+                                        .foregroundStyle(VipleMailPalette.inkMuted)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(VipleMailPalette.inkMuted)
+                            }
+                            .padding(11)
+                            .background(RoundedRectangle(cornerRadius: 15, style: .continuous).fill(VipleMailPalette.surface))
+                            .overlay(RoundedRectangle(cornerRadius: 15, style: .continuous).stroke(VipleMailPalette.border, lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
         }
     }
 

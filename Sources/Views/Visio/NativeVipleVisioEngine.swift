@@ -4,6 +4,7 @@ import SwiftUI
 import UIKit
 @preconcurrency import AVFoundation
 @preconcurrency import AVFAudio
+@preconcurrency import Speech
 import CoreImage
 #endif
 
@@ -54,11 +55,35 @@ private struct VisioWirePeerDto: Decodable, Sendable {
     let videoEnabled: Bool?
 }
 
+public struct BetaVisioWhiteboardStroke: Codable, Identifiable, Equatable, Sendable {
+    public let id: String
+    public let colorHex: String
+    public var pointsX: [Double]
+    public var pointsY: [Double]
+}
+
+public struct BetaVisioChatMessage: Codable, Identifiable, Equatable, Sendable {
+    public let id: String
+    public let senderName: String
+    public let text: String
+    public let sentAt: Date
+}
+
+public struct BetaVisioFloatingEmoji: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let emoji: String
+    public let senderName: String
+    public let createdAt: Date
+}
+
 private struct VisioWireControlEnvelope: Decodable, Sendable {
     let type: String
     let selfSlotId: UInt32?
     let slotId: UInt32?
     let email: String?
+    let senderName: String?
+    let eventKind: String?
+    let payloadJson: String?
     let audioMuted: Bool?
     let videoEnabled: Bool?
     let peer: VisioWirePeerDto?
@@ -108,7 +133,9 @@ private final class VisioAudioPipeline: @unchecked Sendable {
     private let lock = NSLock()
     private var engine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
+    private var voiceEqNode: AVAudioUnitEQ?
     private var activeConverter: AVAudioConverter?
+    private var activeSpeechRequest: SFSpeechAudioBufferRecognitionRequest?
     private let playbackFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
     private let networkInt16Format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1, interleaved: true)!
 
@@ -119,6 +146,19 @@ private final class VisioAudioPipeline: @unchecked Sendable {
     func setMuted(_ muted: Bool) {
         lock.lock()
         isMuted = muted
+        lock.unlock()
+    }
+
+    func setVoiceClarityEqEnabled(_ enabled: Bool) {
+        lock.lock()
+        let eq = voiceEqNode
+        lock.unlock()
+        eq?.bypass = !enabled
+    }
+
+    func setSpeechRecognitionRequest(_ req: SFSpeechAudioBufferRecognitionRequest?) {
+        lock.lock()
+        activeSpeechRequest = req
         lock.unlock()
     }
 
@@ -149,8 +189,21 @@ private final class VisioAudioPipeline: @unchecked Sendable {
 
         let newEngine = AVAudioEngine()
         let newPlayer = AVAudioPlayerNode()
+        let voiceEq = AVAudioUnitEQ(numberOfBands: 2)
+        if voiceEq.bands.count >= 2 {
+            voiceEq.bands[0].filterType = .highPass
+            voiceEq.bands[0].frequency = 110
+            voiceEq.bands[0].bypass = false
+            voiceEq.bands[1].filterType = .parametric
+            voiceEq.bands[1].frequency = 2600
+            voiceEq.bands[1].bandwidth = 1.0
+            voiceEq.bands[1].gain = 4.5
+            voiceEq.bands[1].bypass = false
+        }
         newEngine.attach(newPlayer)
-        newEngine.connect(newPlayer, to: newEngine.mainMixerNode, format: playbackFormat)
+        newEngine.attach(voiceEq)
+        newEngine.connect(newPlayer, to: voiceEq, format: playbackFormat)
+        newEngine.connect(voiceEq, to: newEngine.mainMixerNode, format: playbackFormat)
 
         let inputNode = newEngine.inputNode
         let hwFormat = inputNode.outputFormat(forBus: 0)
@@ -167,12 +220,14 @@ private final class VisioAudioPipeline: @unchecked Sendable {
                 self.lock.lock()
                 let currentlyMuted = self.isMuted
                 let conv = self.activeConverter
+                let speechReq = self.activeSpeechRequest
                 self.lock.unlock()
 
                 if currentlyMuted {
                     onCapturedPacket(nil, 0)
                     return
                 }
+                speechReq?.append(pcmBuffer)
                 guard let conv else { return }
 
                 let targetFmt = self.networkInt16Format
@@ -228,6 +283,7 @@ private final class VisioAudioPipeline: @unchecked Sendable {
             lock.lock()
             self.engine = newEngine
             self.playerNode = newPlayer
+            self.voiceEqNode = voiceEq
             self.pendingPlaybackBuffers = 0
             self.isRunning = true
             lock.unlock()
@@ -302,7 +358,10 @@ private final class VisioAudioPipeline: @unchecked Sendable {
         let currentPlayer = playerNode
         engine = nil
         playerNode = nil
+        voiceEqNode = nil
         activeConverter = nil
+        activeSpeechRequest?.endAudio()
+        activeSpeechRequest = nil
         isRunning = false
         pendingPlaybackBuffers = 0
         lock.unlock()
@@ -325,7 +384,16 @@ private final class VisioCameraPipeline: NSObject, AVCaptureVideoDataOutputSampl
     private var currentPosition: AVCaptureDevice.Position = .front
     private var lastFrameSentTime: CFAbsoluteTime = 0
     private var isEncodingFrame: Bool = false
+    private var filterMode: String = "none"
+    private var lowBandwidth: Bool = false
     private var onEncodedVideoPacket: (@Sendable (Data) -> Void)?
+
+    func updateTuning(filterMode: String, lowBandwidth: Bool) {
+        stateLock.lock()
+        self.filterMode = filterMode
+        self.lowBandwidth = lowBandwidth
+        stateLock.unlock()
+    }
 
     func start(
         position: AVCaptureDevice.Position,
@@ -432,7 +500,10 @@ private final class VisioCameraPipeline: NSObject, AVCaptureVideoDataOutputSampl
         let now = CFAbsoluteTimeGetCurrent()
 
         stateLock.lock()
-        if isEncodingFrame || (now - lastFrameSentTime) < 0.072 {
+        let minInterval = lowBandwidth ? 0.16 : 0.072
+        let activeFilter = filterMode
+        let isEco = lowBandwidth
+        if isEncodingFrame || (now - lastFrameSentTime) < minInterval {
             stateLock.unlock()
             return
         }
@@ -454,14 +525,47 @@ private final class VisioCameraPipeline: NSObject, AVCaptureVideoDataOutputSampl
 
         var ciImage = CIImage(cvPixelBuffer: pixelBuffer)
         let extent = ciImage.extent
+        let targetMaxSide: CGFloat = isEco ? 240 : 400
         let maxSide = max(extent.width, extent.height)
-        if maxSide > 400 {
-            let scale = 400.0 / maxSide
+        if maxSide > targetMaxSide {
+            let scale = targetMaxSide / maxSide
             ciImage = ciImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
         }
 
-        guard let cgImg = ciContext.createCGImage(ciImage, from: ciImage.extent),
-              let jpegData = UIImage(cgImage: cgImg).jpegData(compressionQuality: 0.45) else {
+        let croppedExtent = ciImage.extent
+        switch activeFilter {
+        case "mono":
+            if let f = CIFilter(name: "CIPhotoEffectNoir") {
+                f.setValue(ciImage, forKey: kCIInputImageKey)
+                if let out = f.outputImage { ciImage = out.cropped(to: croppedExtent) }
+            }
+        case "warm":
+            if let f = CIFilter(name: "CITemperatureAndTint") {
+                f.setValue(ciImage, forKey: kCIInputImageKey)
+                f.setValue(CIVector(x: 6500, y: 0), forKey: "inputNeutral")
+                f.setValue(CIVector(x: 5000, y: 0), forKey: "inputTargetNeutral")
+                if let out = f.outputImage { ciImage = out.cropped(to: croppedExtent) }
+            }
+        case "studio":
+            if let f = CIFilter(name: "CIColorControls") {
+                f.setValue(ciImage, forKey: kCIInputImageKey)
+                f.setValue(1.12, forKey: kCIInputContrastKey)
+                f.setValue(0.04, forKey: kCIInputBrightnessKey)
+                f.setValue(1.15, forKey: kCIInputSaturationKey)
+                if let out = f.outputImage { ciImage = out.cropped(to: croppedExtent) }
+            }
+        case "blur":
+            if let f = CIFilter(name: "CIGaussianBlur") {
+                f.setValue(ciImage, forKey: kCIInputImageKey)
+                f.setValue(6.0, forKey: kCIInputRadiusKey)
+                if let out = f.outputImage { ciImage = out.cropped(to: croppedExtent) }
+            }
+        default:
+            break
+        }
+
+        guard let cgImg = ciContext.createCGImage(ciImage, from: croppedExtent),
+              let jpegData = UIImage(cgImage: cgImg).jpegData(compressionQuality: isEco ? 0.34 : 0.45) else {
             return
         }
 
@@ -495,6 +599,25 @@ public final class NativeVipleVisioEngine: ObservableObject {
     @Published public private(set) var elapsedSeconds: Int = 0
     @Published public private(set) var micPermissionDenied: Bool = false
     @Published public private(set) var cameraPermissionDenied: Bool = false
+
+    // --- Extensions Temps Réel Studio Pro Beta (#061..#070) ---
+    @Published public var whiteboardStrokes: [BetaVisioWhiteboardStroke] = []
+    @Published public var liveSubtitleText: String = ""
+    @Published public var isAutoSpeechCaptionsActive: Bool = false
+    @Published public var floatingEmojis: [BetaVisioFloatingEmoji] = []
+    @Published public var raisedHands: Set<String> = []
+    @Published public var inCallChatMessages: [BetaVisioChatMessage] = []
+    @Published public var activeCameraFilter: String = "none"
+    @Published public var lowBandwidthEcoMode: Bool = false
+    @Published public var measuredRttMs: Int = 18
+    @Published public var estimatedBitrateKbps: Int = 112
+    @Published public var sharedTimeboxEnd: Date? = nil
+    @Published public var callMeetingNotes: [String] = []
+    private var lastPingSentAt: Date = Date()
+    #if canImport(UIKit)
+    private var speechRecognizer: SFSpeechRecognizer? = SFSpeechRecognizer(locale: Locale(identifier: "fr-FR"))
+    private var speechRecognitionTask: SFSpeechRecognitionTask?
+    #endif
 
     public let roomCode: String
     public let localEmail: String
@@ -656,6 +779,9 @@ public final class NativeVipleVisioEngine: ObservableObject {
 
         #if canImport(UIKit)
         UIApplication.shared.isIdleTimerDisabled = false
+        speechRecognitionTask?.cancel()
+        speechRecognitionTask = nil
+        isAutoSpeechCaptionsActive = false
         cameraPipeline.stop()
         audioPipeline.stop()
         #endif
@@ -831,6 +957,152 @@ public final class NativeVipleVisioEngine: ObservableObject {
                 onRemotePeerHangup?()
             }
 
+        case "pong":
+            measuredRttMs = max(4, Int(Date().timeIntervalSince(lastPingSentAt) * 1000))
+
+        case "room_event":
+            handleRoomEvent(kind: env.eventKind ?? "", sender: env.senderName ?? "Participant", rawPayload: env.payloadJson ?? "")
+
+        default:
+            break
+        }
+    }
+
+    public func broadcastRoomEvent(kind: String, payloadObject: [String: Any]) {
+        guard let ws = webSocketTask,
+              let payloadData = try? JSONSerialization.data(withJSONObject: payloadObject),
+              let payloadStr = String(data: payloadData, encoding: .utf8) else { return }
+        let msg = #"{"type":"room_event","eventKind":"\#(kind)","payload":\#(payloadStr)}"#
+        ws.send(.string(msg)) { _ in }
+    }
+
+    public func applyVideoFilterAndEco(filter: String, eco: Bool) {
+        activeCameraFilter = filter
+        lowBandwidthEcoMode = eco
+        estimatedBitrateKbps = eco ? 48 : (isVideoEnabled ? 145 : 32)
+        #if canImport(UIKit)
+        cameraPipeline.updateTuning(filterMode: filter, lowBandwidth: eco)
+        #endif
+    }
+
+    public func sendInCallChat(_ text: String) {
+        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return }
+        let entry = BetaVisioChatMessage(id: UUID().uuidString, senderName: localDisplayName, text: clean, sentAt: Date())
+        inCallChatMessages.append(entry)
+        broadcastRoomEvent(kind: "chat", payloadObject: ["text": clean])
+    }
+
+    public func sendFloatingReaction(_ emoji: String) {
+        let item = BetaVisioFloatingEmoji(id: UUID().uuidString, emoji: emoji, senderName: localDisplayName, createdAt: Date())
+        floatingEmojis.append(item)
+        if emoji == "✋" {
+            if raisedHands.contains(localDisplayName) { raisedHands.remove(localDisplayName) }
+            else { raisedHands.insert(localDisplayName) }
+        }
+        broadcastRoomEvent(kind: "reaction", payloadObject: ["emoji": emoji])
+    }
+
+    public func addWhiteboardStroke(_ stroke: BetaVisioWhiteboardStroke) {
+        whiteboardStrokes.append(stroke)
+        broadcastRoomEvent(kind: "wb_stroke", payloadObject: [
+            "id": stroke.id,
+            "colorHex": stroke.colorHex,
+            "x": stroke.pointsX,
+            "y": stroke.pointsY
+        ])
+    }
+
+    public func clearWhiteboard() {
+        whiteboardStrokes.removeAll()
+        broadcastRoomEvent(kind: "wb_clear", payloadObject: [:])
+    }
+
+    public func broadcastSubtitle(_ line: String) {
+        liveSubtitleText = "\(localDisplayName) : \(line)"
+        broadcastRoomEvent(kind: "caption", payloadObject: ["line": line])
+    }
+
+    public func setVoiceClarityBoost(_ enabled: Bool) {
+        #if canImport(UIKit)
+        audioPipeline.setVoiceClarityEqEnabled(enabled)
+        #endif
+    }
+
+    public func toggleAutoSpeechCaptions() {
+        #if canImport(UIKit)
+        if isAutoSpeechCaptionsActive {
+            speechRecognitionTask?.cancel()
+            speechRecognitionTask = nil
+            audioPipeline.setSpeechRecognitionRequest(nil)
+            isAutoSpeechCaptionsActive = false
+            return
+        }
+        SFSpeechRecognizer.requestAuthorization { status in
+            Task { @MainActor [weak self] in
+                guard let self, status == .authorized, let recognizer = self.speechRecognizer, recognizer.isAvailable else {
+                    return
+                }
+                let req = SFSpeechAudioBufferRecognitionRequest()
+                req.shouldReportPartialResults = true
+                self.audioPipeline.setSpeechRecognitionRequest(req)
+                self.isAutoSpeechCaptionsActive = true
+                self.speechRecognitionTask = recognizer.recognitionTask(with: req) { [weak self] result, error in
+                    let latestSegment = result?.bestTranscription.formattedString.suffix(90).description
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        if let seg = latestSegment, !seg.isEmpty {
+                            self.broadcastSubtitle(seg)
+                        }
+                        if error != nil {
+                            self.isAutoSpeechCaptionsActive = false
+                        }
+                    }
+                }
+            }
+        }
+        #endif
+    }
+
+    public func startSharedTimebox(minutes: Int) {
+        let end = Date().addingTimeInterval(Double(minutes * 60))
+        sharedTimeboxEnd = end
+        broadcastRoomEvent(kind: "timebox", payloadObject: ["endEpoch": end.timeIntervalSince1970])
+    }
+
+    private func handleRoomEvent(kind: String, sender: String, rawPayload: String) {
+        guard let d = rawPayload.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return }
+        switch kind {
+        case "chat":
+            if let txt = dict["text"] as? String {
+                inCallChatMessages.append(BetaVisioChatMessage(id: UUID().uuidString, senderName: sender, text: txt, sentAt: Date()))
+            }
+        case "reaction":
+            if let em = dict["emoji"] as? String {
+                floatingEmojis.append(BetaVisioFloatingEmoji(id: UUID().uuidString, emoji: em, senderName: sender, createdAt: Date()))
+                if em == "✋" {
+                    if raisedHands.contains(sender) { raisedHands.remove(sender) }
+                    else { raisedHands.insert(sender) }
+                }
+            }
+        case "wb_stroke":
+            if let id = dict["id"] as? String,
+               let col = dict["colorHex"] as? String,
+               let xs = dict["x"] as? [Double],
+               let ys = dict["y"] as? [Double] {
+                whiteboardStrokes.append(BetaVisioWhiteboardStroke(id: id, colorHex: col, pointsX: xs, pointsY: ys))
+            }
+        case "wb_clear":
+            whiteboardStrokes.removeAll()
+        case "caption":
+            if let line = dict["line"] as? String {
+                liveSubtitleText = "\(sender) : \(line)"
+            }
+        case "timebox":
+            if let ep = dict["endEpoch"] as? Double {
+                sharedTimeboxEnd = Date(timeIntervalSince1970: ep)
+            }
         default:
             break
         }
@@ -918,8 +1190,10 @@ public final class NativeVipleVisioEngine: ObservableObject {
                     }
                 }
 
-                // Keepalive applicatif toutes les 15 secondes
+                // Keepalive applicatif toutes les 15 secondes + purge des émojis flottants anciens
+                self.floatingEmojis.removeAll { now.timeIntervalSince($0.createdAt) > 3.2 }
                 if tickCount % 30 == 0, let ws = self.webSocketTask {
+                    self.lastPingSentAt = Date()
                     ws.send(.string(#"{"type":"ping"}"#)) { _ in }
                 }
             }

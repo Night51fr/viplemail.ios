@@ -564,6 +564,7 @@ private struct VipleMailHTMLWebView: UIViewRepresentable {
 
 public struct MessageDetailView: View {
     @EnvironmentObject private var vm: VipleMailViewModel
+    @ObservedObject private var beta = VipleBetaStore.shared
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.scenePhase) private var scenePhase
     public let message: VipleMailMessage
@@ -642,6 +643,8 @@ public struct MessageDetailView: View {
 
                         Divider()
 
+                        BetaMessageReaderAugmentationView(message: currentMessage)
+
                         if !currentMessage.isLockedByCenelisPin {
                             let parsedInvites = VipleCalendarParser.extractInvites(
                                 fromPlain: currentMessage.plainBodyText,
@@ -663,6 +666,9 @@ public struct MessageDetailView: View {
                         }
 
                         classicEmailBodySection(currentMessage)
+                            .overlay {
+                                BetaConfidentialWatermarkOverlay(viewerEmail: vm.currentEmail)
+                            }
 
                         if !previousEmailsInThread.isEmpty {
                             Divider()
@@ -672,6 +678,11 @@ public struct MessageDetailView: View {
                     }
                     .background(VipleMailPalette.surface)
                     .offset(x: horizontalSwipeOffset)
+                    .rotation3DEffect(
+                        .degrees(beta.isEnabled(.f037) && beta.mailSwipeTransitionStyle == .cube3D ? Double(horizontalSwipeOffset / 6.0) : 0),
+                        axis: (x: 0, y: 1, z: 0)
+                    )
+                    .scaleEffect(beta.isEnabled(.f037) && beta.mailSwipeTransitionStyle == .editorialZoom ? max(0.94, 1.0 - abs(horizontalSwipeOffset) / 900.0) : 1.0)
                     .opacity(contentTransitionOpacity)
                 }
                 .background(VipleMailPalette.surface)
@@ -1436,9 +1447,10 @@ public struct MessageDetailView: View {
                     }
                 }
 
+                let effectiveHtmlBody = BetaSecurityInspector.sanitizeHtmlTrackers(msg.bodyHtml)
                 if colorScheme == .dark && !effectiveRenderHtmlDark {
                     VipleMailHTMLWebView(
-                        htmlBody: msg.bodyHtml,
+                        htmlBody: effectiveHtmlBody,
                         renderDark: false,
                         dynamicHeight: $htmlContentHeight,
                         onHorizontalDragChanged: { dx in
@@ -1460,7 +1472,7 @@ public struct MessageDetailView: View {
                     )
                 } else {
                     VipleMailHTMLWebView(
-                        htmlBody: msg.bodyHtml,
+                        htmlBody: effectiveHtmlBody,
                         renderDark: effectiveRenderHtmlDark,
                         dynamicHeight: $htmlContentHeight,
                         onHorizontalDragChanged: { dx in

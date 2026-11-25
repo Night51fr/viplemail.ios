@@ -172,6 +172,8 @@ public struct NativeVipleVisioCallStudioView: View {
                     .padding(.horizontal, isCompactScreen ? 12 : 16)
                 }
                 #endif
+
+                BetaVisioProStudioOverlayView(engine: engine)
             }
         }
         .task {
@@ -860,6 +862,7 @@ public struct VipleVisioGlobalCallOverlay: View {
 public struct MailAgendaView: View {
     @EnvironmentObject private var vm: VipleMailViewModel
     @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var beta = VipleBetaStore.shared
     @State private var selectedDate: Date = Date()
     @State private var eventForGuestLinkSheet: VipleAgendaEvent? = nil
     @State private var isShowingStandaloneLinkSheet: Bool = false
@@ -891,6 +894,8 @@ public struct MailAgendaView: View {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 18) {
                     quickActionsBanner
+
+                    BetaAgendaAugmentationStripView(selectedDate: $selectedDate)
 
                     daySection
 
@@ -1155,6 +1160,23 @@ public struct MailAgendaView: View {
                         }
                         Divider()
                     }
+                    if beta.isEnabled(.f074) {
+                        Button {
+                            Task {
+                                let res = await BetaAgendaFreeSlotsHelper.exportToNativeAppleCalendar(ev)
+                                vm.showToast(res)
+                            }
+                        } label: {
+                            Label("Ajouter au Calendrier iOS (EventKit)", systemImage: "calendar.badge.checkmark")
+                        }
+                        ShareLink(
+                            item: BetaAgendaFreeSlotsHelper.buildIcsContent(for: ev),
+                            preview: SharePreview("\(ev.title).ics")
+                        ) {
+                            Label("Exporter le fichier .ics", systemImage: "square.and.arrow.up")
+                        }
+                        Divider()
+                    }
                     Button(role: .destructive) {
                         Task {
                             await vm.deleteAgendaEvent(ev)
@@ -1246,6 +1268,21 @@ public struct CreateAgendaOrVisioSheet: View {
                         Text("1 heure").tag(60)
                         Text("1h30").tag(90)
                         Text("2 heures").tag(120)
+                    }
+
+                    if VipleBetaStore.shared.isEnabled(.f072),
+                       let conflict = BetaAgendaFreeSlotsHelper.hasConflict(
+                           start: startDate,
+                           end: startDate.addingTimeInterval(TimeInterval(durationMinutes * 60)),
+                           existing: vm.agendaEvents
+                       ) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.red)
+                            Text("Conflit détecté avec « \(conflict.title) » (\(conflict.startDate.formatted(date: .omitted, time: .shortened)))")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(.red)
+                        }
                     }
 
                     if !isVisioSession {
@@ -1628,6 +1665,7 @@ public struct VipleCalendarComposerSheet: View {
 
 public struct VipleCalendarMailInviteCardView: View {
     @EnvironmentObject private var vm: VipleMailViewModel
+    @ObservedObject private var beta = VipleBetaStore.shared
     public let invite: ParsedVipleCalendarInvite
     @State private var isImporting: Bool = false
 
@@ -1638,6 +1676,9 @@ public struct VipleCalendarMailInviteCardView: View {
     public var body: some View {
         let alreadyAdded = vm.isInviteAlreadyInAgenda(invite)
         let hasVisio = !(invite.visioJoinUrl ?? "").isEmpty
+        let detectedConflict = (!alreadyAdded && beta.isEnabled(.f072))
+            ? BetaAgendaFreeSlotsHelper.hasConflict(start: invite.startDate, end: invite.endDate, existing: vm.agendaEvents)
+            : nil
 
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
@@ -1653,6 +1694,19 @@ public struct VipleCalendarMailInviteCardView: View {
             Text(invite.title)
                 .font(.system(size: 17, weight: .bold, design: .rounded))
                 .foregroundStyle(VipleMailPalette.ink)
+
+            if let conflict = detectedConflict {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                    Text("Chevauchement avec « \(conflict.title) » (\(conflict.startDate.formatted(date: .omitted, time: .shortened)))")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.red)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color.red.opacity(0.10)))
+            }
 
             VStack(alignment: .leading, spacing: 4) {
                 Label(
